@@ -4,13 +4,14 @@ import json
 import random
 import requests
 import logging
+import re
 from io import BytesIO
 from datetime import datetime
 from PIL import Image
 from atproto import Client, models, client_utils
 import anthropic
 
-# --- LOGGING SETUP (Must be at the top!) ---
+# --- LOGGING SETUP ---
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s [%(levelname)s] %(message)s',
@@ -83,7 +84,10 @@ def get_claude_text(prompt):
             model="claude-3-haiku-20240307", max_tokens=300,
             messages=[{"role": "user", "content": prompt}]
         )
-        return msg.content[0].text.strip()
+        text = msg.content[0].text.strip()
+        # STRIP HASHTAGS from the text body to avoid duplication
+        # "I love #PS1" -> "I love PS1"
+        return text.replace("#", "")
     except Exception as e:
         logger.error(f"Claude Error: {e}")
         return None
@@ -99,6 +103,21 @@ def image_to_bytes(img):
     img = img.convert("RGB")
     img.save(buf, format="JPEG", quality=85)
     return buf.getvalue()
+
+def get_distinct_screenshot(game, exclude_url=None):
+    """
+    Finds a screenshot that is NOT the same as the exclude_url (usually the main image).
+    """
+    screens = game.get('short_screenshots', [])
+    if not screens: return None
+    
+    # Try to find one that doesn't match
+    for shot in screens:
+        if shot['image'] != exclude_url:
+            return shot['image']
+    
+    # If all match (unlikely) or only 1 exists, just return the first
+    return screens[0]['image']
 
 def create_collage(images, grid=(2,1)):
     if not images: return None
@@ -142,7 +161,7 @@ def fetch_games_from_rawg(count=1, platform_ids=None):
     used_games = load_json('history_games.json', [])
     found_games = []
     
-    for _ in range(10): # Max attempts
+    for _ in range(10): 
         if len(found_games) >= count: break
         page = random.randint(1, 200)
         platforms = platform_ids if platform_ids else "27,15,83,79,24,167,80,106"
@@ -165,13 +184,13 @@ def fetch_games_from_rawg(count=1, platform_ids=None):
         
     return found_games
 
-# --- SLOT HANDLERS (Same as before) ---
+# --- SLOT HANDLERS ---
 def run_slot_1_ad(bsky):
     history = load_json('history_ads.json', {'last_index': -1})
     idx = (history['last_index'] + 1) % len(MONDAY_FEATURES)
     feature = MONDAY_FEATURES[idx]
     
-    prompt = f"Write a high-energy 1-sentence hook promoting '{feature['name']}' (a retro gaming tool). No hashtags."
+    prompt = f"Write a high-energy 1-sentence hook promoting '{feature['name']}' (a retro gaming tool). DO NOT use hashtags."
     text = get_claude_text(prompt) or f"Discover {feature['name']} now!"
     
     tb = client_utils.TextBuilder()
@@ -185,6 +204,8 @@ def run_slot_1_ad(bsky):
     img_bytes = None
     if os.path.exists(feature['img']):
         with open(feature['img'], 'rb') as f: img_bytes = f.read()
+    else:
+        logger.warning(f"⚠️ Slot 1 Image missing: {feature['img']}")
     
     if img_bytes:
         upload = bsky.upload_blob(img_bytes)
@@ -196,7 +217,7 @@ def run_slot_1_ad(bsky):
 def run_generic_q(bsky):
     used_q = load_json('history_questions.json', [])
     topic = random.choice([t for t in GENERIC_TOPICS if t not in used_q[-5:]])
-    prompt = f"Write a short, engaging question for retro gamers about '{topic}'. Under 200 chars. No hashtags."
+    prompt = f"Write a short, engaging question for retro gamers about '{topic}'. Under 200 chars. DO NOT use hashtags."
     text = get_claude_text(prompt) or f"What's your take on {topic} in retro games?"
     tb = client_utils.TextBuilder()
     tb.text(text + "\n\n")
@@ -213,32 +234,51 @@ def run_rivalry(bsky):
     games_p2 = fetch_games_from_rawg(1, pair['p2'])
     if not games_p1 or not games_p2: return
     g1, g2 = games_p1[0], games_p2[0]
-    prompt = f"Write a 'vs' question comparing {g1['name']} ({pair['t1']}) and {g2['name']} ({pair['t2']}). Who won this generation? Under 240 chars."
+    
+    prompt = f"Write a 'vs' question comparing {g1['name']} ({pair['t1']}) and {g2['name']} ({pair['t2']}). Who won this generation? Under 240 chars. DO NOT use hashtags."
     text = get_claude_text(prompt) or f"{g1['name']} vs {g2['name']}. Which one did you play?"
+    
     imgs_to_upload = []
-    i1 = download_image(g1['background_image'])
-    i2 = download_image(g2['background_image'])
+    
+    # 1. Collage (Using Main/Box Art)
+    url1 = g1['background_image']
+    url2 = g2['background_image']
+    i1 = download_image(url1)
+    i2 = download_image(url2)
     if i1 and i2:
         collage = create_collage([i1, i2], grid=(2,1))
         blob = bsky.upload_blob(image_to_bytes(collage)).blob
         imgs_to_upload.append(models.AppBskyEmbedImages.Image(alt="Rivalry Collage", image=blob))
-    for g in [g1, g2]:
-        if g.get('short_screenshots'):
-            s_url = g['short_screenshots'][0]['image']
-            s_img = download_image(s_url)
-            if s_img:
-                blob = bsky.upload_blob(image_to_bytes(s_img)).blob
-                imgs_to_upload.append(models.AppBskyEmbedImages.Image(alt=g['name'], image=blob))
+    
+    # 2. Game 1 Distinct Screenshot
+    s_url1 = get_distinct_screenshot(g1, exclude_url=url1)
+    s_img1 = download_image(s_url1)
+    if s_img1:
+        blob = bsky.upload_blob(image_to_bytes(s_img1)).blob
+        imgs_to_upload.append(models.AppBskyEmbedImages.Image(alt=g1['name'], image=blob))
+        
+    # 3. Game 2 Distinct Screenshot
+    s_url2 = get_distinct_screenshot(g2, exclude_url=url2)
+    s_img2 = download_image(s_url2)
+    if s_img2:
+        blob = bsky.upload_blob(image_to_bytes(s_img2)).blob
+        imgs_to_upload.append(models.AppBskyEmbedImages.Image(alt=g2['name'], image=blob))
+
+    # 4. Promo Check
     if os.path.exists("images/promo_ad.jpg"):
         with open("images/promo_ad.jpg", "rb") as f:
             blob = bsky.upload_blob(f.read()).blob
             imgs_to_upload.append(models.AppBskyEmbedImages.Image(alt="Nostalgia.icu", image=blob))
+    else:
+        logger.warning("⚠️ Promo image 'images/promo_ad.jpg' not found. Skipping.")
+
     tb = client_utils.TextBuilder()
     tb.text(text + "\n\n")
     tb.tag("#Retro", "Retro"); tb.text(" ")
     tb.tag("#RetroGaming", "RetroGaming"); tb.text(" ")
     tb.tag(pair['t1'], pair['t1'].replace("#", "")); tb.text(" ")
     tb.tag(pair['t2'], pair['t2'].replace("#", ""))
+    
     bsky.send_post(tb, embed=models.AppBskyEmbedImages.Main(images=imgs_to_upload[:4]))
     logger.info("✅ Rivalry Posted")
 
@@ -246,6 +286,7 @@ def run_single_game_post(bsky, slot_type):
     game_list = fetch_games_from_rawg(1)
     if not game_list: return
     game = game_list[0]
+    
     configs = {
         "Unpopular": {"prompt": "unpopular opinion about difficulty or design", "tag": "#UnpopularOpinion"},
         "Obscure": {"prompt": "why this is a hidden gem", "tag": "#HiddenGem"},
@@ -253,22 +294,40 @@ def run_single_game_post(bsky, slot_type):
         "Memory": {"prompt": "ask for a specific childhood memory", "tag": None}
     }
     cfg = configs[slot_type]
-    prompt = f"Write a Bluesky post about '{game['name']}'. Theme: {cfg['prompt']}. Under 240 chars. No hashtags."
+    
+    prompt = f"Write a Bluesky post about '{game['name']}'. Theme: {cfg['prompt']}. Under 240 chars. DO NOT use hashtags."
     text = get_claude_text(prompt) or f"Remember {game['name']}?"
+    
     imgs_to_upload = []
-    main_img = download_image(game['background_image'])
+    
+    # 1. Main ("Box Art")
+    main_url = game['background_image']
+    main_img = download_image(main_url)
     if main_img:
         blob = bsky.upload_blob(image_to_bytes(main_img)).blob
         imgs_to_upload.append(models.AppBskyEmbedImages.Image(alt=game['name'], image=blob))
-    for shot in game.get('short_screenshots', [])[:2]:
+        
+    # 2 & 3. Distinct Screens
+    # Just iterate and take first 2 valid ones
+    screens_added = 0
+    for shot in game.get('short_screenshots', []):
+        if screens_added >= 2: break
+        if shot['image'] == main_url: continue # Skip if same as main
+        
         s_img = download_image(shot['image'])
         if s_img:
             blob = bsky.upload_blob(image_to_bytes(s_img)).blob
             imgs_to_upload.append(models.AppBskyEmbedImages.Image(alt="Gameplay", image=blob))
+            screens_added += 1
+            
+    # 4. Promo
     if os.path.exists("images/promo_ad.jpg"):
         with open("images/promo_ad.jpg", "rb") as f:
             blob = bsky.upload_blob(f.read()).blob
             imgs_to_upload.append(models.AppBskyEmbedImages.Image(alt="Nostalgia.icu", image=blob))
+    else:
+        logger.warning("⚠️ Promo image 'images/promo_ad.jpg' not found. Skipping.")
+
     plat_tag = get_platform_tag(game)
     tb = client_utils.TextBuilder()
     tb.text(text + "\n\n")
@@ -278,6 +337,7 @@ def run_single_game_post(bsky, slot_type):
     if cfg['tag']:
         tb.text(" ")
         tb.tag(cfg['tag'], cfg['tag'].replace("#", ""))
+    
     bsky.send_post(tb, embed=models.AppBskyEmbedImages.Main(images=imgs_to_upload[:4]))
     logger.info(f"✅ {slot_type} Posted: {game['name']}")
 
@@ -285,8 +345,9 @@ def run_fact(bsky):
     game_list = fetch_games_from_rawg(1)
     if not game_list: return
     game = game_list[0]
-    prompt = f"Tell a surprising, short trivia fact about the video game '{game['name']}'. Under 200 chars. No hashtags."
+    prompt = f"Tell a surprising, short trivia fact about the video game '{game['name']}'. Under 200 chars. DO NOT use hashtags."
     text = get_claude_text(prompt) or f"Did you know {game['name']} is considered a classic?"
+    
     plat_tag = get_platform_tag(game)
     tb = client_utils.TextBuilder()
     tb.text(f"Did you know? 🧠\n\n{text}\n\n")
@@ -294,6 +355,7 @@ def run_fact(bsky):
     tb.tag("#RetroGaming", "RetroGaming"); tb.text(" ")
     tb.tag(plat_tag, plat_tag.replace("#", "")); tb.text(" ")
     tb.tag("#Trivia", "Trivia")
+    
     bsky.send_post(tb)
     used_f = load_json('history_facts.json', [])
     used_f.append(game['id'])
@@ -303,30 +365,43 @@ def run_fact(bsky):
 def run_starter_pack(bsky):
     games = fetch_games_from_rawg(4)
     if len(games) < 4: return
-    prompt = "Ask: 'You have to delete one of these classics forever. Which one goes?' Under 200 chars."
+    prompt = "Ask: 'You have to delete one of these classics forever. Which one goes?' Under 200 chars. DO NOT use hashtags."
     text = get_claude_text(prompt) or "One has to go. Which one do you choose?"
+    
     imgs_to_upload = []
+    
+    # 1. 2x2 Collage
     pil_imgs = [download_image(g['background_image']) for g in games]
     pil_imgs = [p for p in pil_imgs if p]
     if len(pil_imgs) >= 4:
         collage = create_collage(pil_imgs[:4], grid=(2,2))
         blob = bsky.upload_blob(image_to_bytes(collage)).blob
         imgs_to_upload.append(models.AppBskyEmbedImages.Image(alt="Starter Pack", image=blob))
+        
+    # 2 & 3. Random Screens
+    # Just grab screen from Game 1 and Game 2
     for g in games[:2]:
-        if g.get('short_screenshots'):
-            s_img = download_image(g['short_screenshots'][0]['image'])
-            if s_img:
-                blob = bsky.upload_blob(image_to_bytes(s_img)).blob
-                imgs_to_upload.append(models.AppBskyEmbedImages.Image(alt="Gameplay", image=blob))
+        main_url = g['background_image']
+        s_url = get_distinct_screenshot(g, exclude_url=main_url)
+        s_img = download_image(s_url)
+        if s_img:
+            blob = bsky.upload_blob(image_to_bytes(s_img)).blob
+            imgs_to_upload.append(models.AppBskyEmbedImages.Image(alt="Gameplay", image=blob))
+
+    # 4. Promo
     if os.path.exists("images/promo_ad.jpg"):
         with open("images/promo_ad.jpg", "rb") as f:
             blob = bsky.upload_blob(f.read()).blob
             imgs_to_upload.append(models.AppBskyEmbedImages.Image(alt="Nostalgia.icu", image=blob))
+    else:
+        logger.warning("⚠️ Promo image 'images/promo_ad.jpg' not found. Skipping.")
+            
     tb = client_utils.TextBuilder()
     tb.text(text + "\n\n")
     tb.tag("#Retro", "Retro"); tb.text(" ")
     tb.tag("#RetroGaming", "RetroGaming"); tb.text(" ")
     tb.tag("#GamingSetup", "GamingSetup")
+    
     bsky.send_post(tb, embed=models.AppBskyEmbedImages.Main(images=imgs_to_upload[:4]))
     logger.info("✅ Starter Pack Posted")
 
@@ -334,7 +409,6 @@ def run_starter_pack(bsky):
 def main():
     logger.info("--- BOT RUN STARTED ---")
     
-    # 1. Login
     try:
         bsky = Client()
         bsky.login(BSKY_HANDLE, BSKY_PASSWORD)
@@ -343,34 +417,26 @@ def main():
         logger.error(f"❌ Login Failed: {e}")
         return
 
-    # 2. Determine Slot
     now = datetime.utcnow()
     day = now.weekday()
     hour = now.hour
     
-    # INPUT HANDLING (Dropdown text parsing)
-    # The dropdown gives us string like "Slot 3: Tue 10:00..."
-    # We need to extract the number "3" or determine if it's "Auto-Detect"
-    
+    # MANUAL OVERRIDE CHECK
     forced_input = os.environ.get("FORCED_SLOT", "")
     is_manual = os.environ.get("IS_MANUAL") == "true"
     
     slot_id = None
 
     if is_manual and "Slot" in forced_input:
-        # Extract the integer from "Slot 3: ..."
         try:
-            parts = forced_input.split(":") 
-            # "Slot 3" -> split " " -> ["Slot", "3"]
+            parts = forced_input.split(":")
             slot_id = int(parts[0].replace("Slot", "").strip())
             logger.info(f"🛠️ Manual Override: User selected Slot {slot_id}")
         except Exception as e:
-            logger.error(f"❌ Could not parse slot ID from '{forced_input}': {e}")
+            logger.error(f"❌ Could not parse slot ID: {e}")
             return
 
     elif is_manual and "Auto-Detect" in forced_input:
-        # Manual run but user chose "Auto"
-        # Since it's likely testing at a weird time, just force the first slot of the current day
         todays_slots = list(SCHEDULE.get(day, {}).values())
         if todays_slots:
             slot_id = todays_slots[0]
@@ -379,13 +445,12 @@ def main():
             logger.warning("⚠️ No slots found for today.")
 
     elif not is_manual:
-        # Standard CRON Run
         slot_id = SCHEDULE.get(day, {}).get(hour)
         if not slot_id:
             logger.info(f"⏳ No slot scheduled for UTC Day {day} Hour {hour}. Exiting.")
             return
 
-    # 3. Execute
+    # EXECUTE
     logger.info(f"🚀 Executing Slot {slot_id}...")
 
     if slot_id == 1: run_slot_1_ad(bsky)
