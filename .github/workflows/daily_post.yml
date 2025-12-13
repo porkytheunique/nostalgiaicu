@@ -4,11 +4,14 @@ on:
   schedule:
     # Runs at 10:00 UTC and 15:00 UTC every day
     - cron: '0 10,15 * * *'
-  workflow_dispatch: # Allows manual trigger for testing
+  workflow_dispatch: # Allows you to click "Run workflow" to test manually
 
 jobs:
   run-bot:
     runs-on: ubuntu-latest
+    # Give the bot permission to save its "history" back to your folder
+    permissions:
+      contents: write
     
     steps:
     - name: Checkout code
@@ -21,7 +24,8 @@ jobs:
 
     - name: Install dependencies
       run: |
-        pip install requests atproto pillow
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
 
     - name: Run Bot Script
       env:
@@ -36,4 +40,5 @@ jobs:
         git config --global user.name "RetroBot-Action"
         git config --global user.email "bot@nostalgia.icu"
         git add *.json
+        # Only commit if there are actually changes to the history files
         git diff --quiet && git diff --staged --quiet || (git commit -m "Update bot history [skip ci]" && git push)
