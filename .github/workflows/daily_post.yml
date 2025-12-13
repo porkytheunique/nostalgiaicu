@@ -1,0 +1,39 @@
+name: Daily Retro Bot Post
+
+on:
+  schedule:
+    # Runs at 10:00 UTC and 15:00 UTC every day
+    - cron: '0 10,15 * * *'
+  workflow_dispatch: # Allows manual trigger for testing
+
+jobs:
+  run-bot:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+
+    - name: Install dependencies
+      run: |
+        pip install requests atproto pillow
+
+    - name: Run Bot Script
+      env:
+        RAWG_API_KEY: ${{ secrets.RAWG_API_KEY }}
+        ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        BLUESKY_HANDLE: ${{ secrets.BLUESKY_HANDLE }}
+        BLUESKY_PASSWORD: ${{ secrets.BLUESKY_PASSWORD }}
+      run: python post_generator.py
+
+    - name: Commit and Push Changes (JSON DB)
+      run: |
+        git config --global user.name "RetroBot-Action"
+        git config --global user.email "bot@nostalgia.icu"
+        git add *.json
+        git diff --quiet && git diff --staged --quiet || (git commit -m "Update bot history [skip ci]" && git push)
