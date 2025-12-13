@@ -4,12 +4,16 @@ on:
   schedule:
     # Runs at 10:00 UTC and 15:00 UTC every day
     - cron: '0 10,15 * * *'
-  workflow_dispatch: # Allows you to click "Run workflow" to test manually
+  workflow_dispatch: 
+    inputs:
+      force_slot:
+        description: 'Force a specific Slot ID (1-12). Leave empty for Auto-Day.'
+        required: false
+        default: ''
 
 jobs:
   run-bot:
     runs-on: ubuntu-latest
-    # Give the bot permission to save its "history" back to your folder
     permissions:
       contents: write
     
@@ -25,7 +29,9 @@ jobs:
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install -r requirements.txt
+        # install from requirements if exists, otherwise explicit install
+        if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+        pip install requests atproto anthropic Pillow
 
     - name: Run Bot Script
       env:
@@ -33,6 +39,10 @@ jobs:
         ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         BLUESKY_HANDLE: ${{ secrets.BLUESKY_HANDLE }}
         BLUESKY_PASSWORD: ${{ secrets.BLUESKY_PASSWORD }}
+        # Pass the manual input to the script
+        FORCED_SLOT: ${{ inputs.force_slot }}
+        # Tell the script if this is a manual run
+        IS_MANUAL: ${{ github.event_name == 'workflow_dispatch' }}
       run: python post_generator.py
 
     - name: Commit and Push Changes (JSON DB)
@@ -40,5 +50,5 @@ jobs:
         git config --global user.name "RetroBot-Action"
         git config --global user.email "bot@nostalgia.icu"
         git add *.json
-        # Only commit if there are actually changes to the history files
+        # Only commit if history files changed
         git diff --quiet && git diff --staged --quiet || (git commit -m "Update bot history [skip ci]" && git push)
