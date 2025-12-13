@@ -36,11 +36,104 @@ SCHEDULE = {
     6: {10: 11, 15: 12}  # Sun
 }
 
+# --- MONDAY FEATURE DEFINITIONS ---
 MONDAY_FEATURES = [
-    {"name": "Retro Radio", "url": "https://nostalgia.icu/radio", "img": "images/ad_radio.jpg", "tag": "#Radio"},
-    {"name": "Nostalgia Quest", "url": "https://nostalgia.icu/login", "img": "images/ad_quest.jpg", "tag": "#RPG"},
-    {"name": "Game Database", "url": "https://nostalgia.icu", "img": "images/ad_general.jpg", "tag": "#Library"},
-    {"name": "Pixel Challenge", "url": "https://nostalgia.icu/challenge", "img": "images/ad_general.jpg", "tag": "#Challenge"} 
+    # 1. Library
+    {
+        "name": "Magazine Library",
+        "url": "https://www.nostalgia.icu/library/",
+        "img": "images/ad_library.jpg",
+        "texts": [
+            "Flip through the pages of history! 📖 Our Archive contains thousands of classic gaming magazines preserved for you.",
+            "Remember the hype? Revisit the golden era of gaming journalism in our digital Magazine Library. 📰",
+            "From strategy guides to old ads, explore the print heritage of video games in our Library."
+        ],
+        "tag": "#RetroMagazines"
+    },
+    # 2. Media Player
+    {
+        "name": "Retro Media Player",
+        "url": "https://www.nostalgia.icu/media/",
+        "img": "images/ad_media.jpg",
+        "texts": [
+            "Tune in to the past! 📺 Watch live retro gaming streams, vintage cartoons, and classic commercials on our Media Player.",
+            "Your portal to broadcast history. 📡 Catch documentaries, game promos, and TV ads from the CRT era.",
+            "Need something to watch? Our Retro Media Player streams vintage content, cartoons, and gameplay 24/7."
+        ],
+        "tag": "#RetroTV"
+    },
+    # 3. Radio
+    {
+        "name": "Retro Radio",
+        "url": "https://www.nostalgia.icu/radio/",
+        "img": "images/ad_radio.jpg",
+        "texts": [
+            "Vibe to the classics. 📻 Our 24/7 Retro Radio plays the best video game soundtracks and chiptunes all day long.",
+            "Work, study, or relax to the sounds of 8-bit and 16-bit mastery. Tune in to Nostalgia Radio now! 🎵",
+            "The soundtrack of your childhood is streaming live. 🎧 Listen to pure VGM goodness on our Retro Radio."
+        ],
+        "tag": "#VGM"
+    },
+    # 4. Advisor
+    {
+        "name": "System Advisor",
+        "url": "https://www.nostalgia.icu/advisor/",
+        "img": "images/ad_advisor.jpg",
+        "texts": [
+            "Stuck in a game or need a recommendation? 🤖 Chat with our System Curator for instant retro guidance.",
+            "Find the value of your old carts or get tech support for vintage hardware. Our Advisor is online. 💡",
+            "Not sure what to play next? Ask our System Curator to unearth a hidden gem just for you."
+        ],
+        "tag": "#RetroHelp"
+    },
+    # 5. Quest
+    {
+        "name": "Nostalgia Quest",
+        "url": "https://www.nostalgia.icu/quest/",
+        "img": "images/ad_quest.jpg",
+        "texts": [
+            "Enter the dungeon! ⚔️ Join the Nostalgia Quest, an infinite crawler where your retro knowledge is your weapon.",
+            "Earn badges and climb the leaderboards. 🛡️ Prove your mastery in our RPG-style Nostalgia Quest.",
+            "Adventure awaits. clear floors, collect loot, and challenge yourself in the Nostalgia Quest."
+        ],
+        "tag": "#RetroRPG"
+    },
+    # 6. History
+    {
+        "name": "Gaming History",
+        "url": "https://www.nostalgia.icu/history/",
+        "img": "images/ad_history.jpg",
+        "texts": [
+            "On this day in gaming... 📅 Check out which legendary titles were released on this exact date.",
+            "Travel back in time. ⏳ See what happened today in video game history with our daily chronicle.",
+            "Celebrate the anniversaries of the games that defined us. Check today's releases in the History section."
+        ],
+        "tag": "#GamingHistory"
+    },
+    # 7. Database
+    {
+        "name": "Game Database",
+        "url": "https://www.nostalgia.icu/database/",
+        "img": "images/ad_database.jpg",
+        "texts": [
+            "The ultimate index. 💾 Search our massive Database to find details on almost every game ever made.",
+            "Need specs, release dates, or screenshots? 💽 Our Game Database has the data you're looking for.",
+            "Cataloging the past. Explore our comprehensive Database and discover games you missed."
+        ],
+        "tag": "#GameDB"
+    },
+    # 8. Pixel Challenge
+    {
+        "name": "Pixel Challenge",
+        "url": "https://www.nostalgia.icu/challenge/",
+        "img": "images/ad_challenge.jpg",
+        "texts": [
+            "Test your eyes! 👀 Can you identify the game from a single zoomed-in pixel art image?",
+            "Take the Daily Pixel Challenge. 🧩 Guess the retro classic and keep your streak alive.",
+            "Think you know your sprites? Prove it in our Pixel Challenge and show off your retro IQ."
+        ],
+        "tag": "#PixelArt"
+    }
 ]
 
 GENERIC_TOPICS = [
@@ -85,8 +178,6 @@ def get_claude_text(prompt):
             messages=[{"role": "user", "content": prompt}]
         )
         text = msg.content[0].text.strip()
-        # STRIP HASHTAGS from the text body to avoid duplication
-        # "I love #PS1" -> "I love PS1"
         return text.replace("#", "")
     except Exception as e:
         logger.error(f"Claude Error: {e}")
@@ -105,18 +196,11 @@ def image_to_bytes(img):
     return buf.getvalue()
 
 def get_distinct_screenshot(game, exclude_url=None):
-    """
-    Finds a screenshot that is NOT the same as the exclude_url (usually the main image).
-    """
     screens = game.get('short_screenshots', [])
     if not screens: return None
-    
-    # Try to find one that doesn't match
     for shot in screens:
         if shot['image'] != exclude_url:
             return shot['image']
-    
-    # If all match (unlikely) or only 1 exists, just return the first
     return screens[0]['image']
 
 def create_collage(images, grid=(2,1)):
@@ -136,7 +220,6 @@ def create_collage(images, grid=(2,1)):
             collage.paste(img, (x_off, 0))
             x_off += img.width
         return collage
-    
     elif grid == (2,2):
         target_size = 600
         collage = Image.new('RGB', (target_size*2, target_size*2))
@@ -186,19 +269,24 @@ def fetch_games_from_rawg(count=1, platform_ids=None):
 
 # --- SLOT HANDLERS ---
 def run_slot_1_ad(bsky):
+    """Monday 10:00: Rotates through 8 website features with varied text."""
     history = load_json('history_ads.json', {'last_index': -1})
     idx = (history['last_index'] + 1) % len(MONDAY_FEATURES)
     feature = MONDAY_FEATURES[idx]
     
-    prompt = f"Write a high-energy 1-sentence hook promoting '{feature['name']}' (a retro gaming tool). DO NOT use hashtags."
-    text = get_claude_text(prompt) or f"Discover {feature['name']} now!"
+    # Select one of the 3 random messages
+    message = random.choice(feature['texts'])
     
+    logger.info(f"📢 Preparing Monday Ad for: {feature['name']}")
+
     tb = client_utils.TextBuilder()
-    tb.text(text + "\n\n🔗 ")
+    tb.text(message)
+    tb.text("\n\n🔗 Visit: ")
     tb.link(feature['url'], feature['url'])
     tb.text("\n\n")
+    # UPDATED TAGS HERE
     tb.tag("#Retro", "Retro"); tb.text(" ")
-    tb.tag("#Nostalgia", "Nostalgia"); tb.text(" ")
+    tb.tag("#RetroGaming", "RetroGaming"); tb.text(" ")
     tb.tag(feature['tag'], feature['tag'].replace("#", ""))
     
     img_bytes = None
@@ -240,7 +328,6 @@ def run_rivalry(bsky):
     
     imgs_to_upload = []
     
-    # 1. Collage (Using Main/Box Art)
     url1 = g1['background_image']
     url2 = g2['background_image']
     i1 = download_image(url1)
@@ -250,21 +337,18 @@ def run_rivalry(bsky):
         blob = bsky.upload_blob(image_to_bytes(collage)).blob
         imgs_to_upload.append(models.AppBskyEmbedImages.Image(alt="Rivalry Collage", image=blob))
     
-    # 2. Game 1 Distinct Screenshot
     s_url1 = get_distinct_screenshot(g1, exclude_url=url1)
     s_img1 = download_image(s_url1)
     if s_img1:
         blob = bsky.upload_blob(image_to_bytes(s_img1)).blob
         imgs_to_upload.append(models.AppBskyEmbedImages.Image(alt=g1['name'], image=blob))
         
-    # 3. Game 2 Distinct Screenshot
     s_url2 = get_distinct_screenshot(g2, exclude_url=url2)
     s_img2 = download_image(s_url2)
     if s_img2:
         blob = bsky.upload_blob(image_to_bytes(s_img2)).blob
         imgs_to_upload.append(models.AppBskyEmbedImages.Image(alt=g2['name'], image=blob))
 
-    # 4. Promo Check
     if os.path.exists("images/promo_ad.jpg"):
         with open("images/promo_ad.jpg", "rb") as f:
             blob = bsky.upload_blob(f.read()).blob
@@ -300,27 +384,22 @@ def run_single_game_post(bsky, slot_type):
     
     imgs_to_upload = []
     
-    # 1. Main ("Box Art")
     main_url = game['background_image']
     main_img = download_image(main_url)
     if main_img:
         blob = bsky.upload_blob(image_to_bytes(main_img)).blob
         imgs_to_upload.append(models.AppBskyEmbedImages.Image(alt=game['name'], image=blob))
         
-    # 2 & 3. Distinct Screens
-    # Just iterate and take first 2 valid ones
     screens_added = 0
     for shot in game.get('short_screenshots', []):
         if screens_added >= 2: break
-        if shot['image'] == main_url: continue # Skip if same as main
-        
+        if shot['image'] == main_url: continue 
         s_img = download_image(shot['image'])
         if s_img:
             blob = bsky.upload_blob(image_to_bytes(s_img)).blob
             imgs_to_upload.append(models.AppBskyEmbedImages.Image(alt="Gameplay", image=blob))
             screens_added += 1
             
-    # 4. Promo
     if os.path.exists("images/promo_ad.jpg"):
         with open("images/promo_ad.jpg", "rb") as f:
             blob = bsky.upload_blob(f.read()).blob
@@ -370,7 +449,6 @@ def run_starter_pack(bsky):
     
     imgs_to_upload = []
     
-    # 1. 2x2 Collage
     pil_imgs = [download_image(g['background_image']) for g in games]
     pil_imgs = [p for p in pil_imgs if p]
     if len(pil_imgs) >= 4:
@@ -378,8 +456,6 @@ def run_starter_pack(bsky):
         blob = bsky.upload_blob(image_to_bytes(collage)).blob
         imgs_to_upload.append(models.AppBskyEmbedImages.Image(alt="Starter Pack", image=blob))
         
-    # 2 & 3. Random Screens
-    # Just grab screen from Game 1 and Game 2
     for g in games[:2]:
         main_url = g['background_image']
         s_url = get_distinct_screenshot(g, exclude_url=main_url)
@@ -388,7 +464,6 @@ def run_starter_pack(bsky):
             blob = bsky.upload_blob(image_to_bytes(s_img)).blob
             imgs_to_upload.append(models.AppBskyEmbedImages.Image(alt="Gameplay", image=blob))
 
-    # 4. Promo
     if os.path.exists("images/promo_ad.jpg"):
         with open("images/promo_ad.jpg", "rb") as f:
             blob = bsky.upload_blob(f.read()).blob
@@ -421,7 +496,6 @@ def main():
     day = now.weekday()
     hour = now.hour
     
-    # MANUAL OVERRIDE CHECK
     forced_input = os.environ.get("FORCED_SLOT", "")
     is_manual = os.environ.get("IS_MANUAL") == "true"
     
@@ -450,7 +524,6 @@ def main():
             logger.info(f"⏳ No slot scheduled for UTC Day {day} Hour {hour}. Exiting.")
             return
 
-    # EXECUTE
     logger.info(f"🚀 Executing Slot {slot_id}...")
 
     if slot_id == 1: run_slot_1_ad(bsky)
