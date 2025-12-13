@@ -7,9 +7,24 @@ on:
   workflow_dispatch: 
     inputs:
       force_slot:
-        description: 'Force a specific Slot ID (1-12). Leave empty for Auto-Day.'
-        required: false
-        default: ''
+        description: 'Choose a post type to run manually:'
+        required: true
+        default: 'Auto-Detect (Run standard daily schedule)'
+        type: choice
+        options:
+          - 'Auto-Detect (Run standard daily schedule)'
+          - 'Slot 1: Mon 10:00 - Feature Ad'
+          - 'Slot 2: Mon 15:00 - Generic Question'
+          - 'Slot 3: Tue 10:00 - Rivalry (Collage)'
+          - 'Slot 4: Wed 10:00 - Unpopular Opinion'
+          - 'Slot 5: Wed 15:00 - Retro Fact'
+          - 'Slot 6: Thu 10:00 - Obscure/Hidden Gem'
+          - 'Slot 7: Fri 10:00 - Starter Pack (Collage)'
+          - 'Slot 8: Fri 15:00 - Generic Question'
+          - 'Slot 9: Sat 10:00 - Aesthetic/Art'
+          - 'Slot 10: Sat 15:00 - Retro Fact'
+          - 'Slot 11: Sun 10:00 - Memory Question'
+          - 'Slot 12: Sun 15:00 - Retro Fact'
 
 jobs:
   run-bot:
@@ -39,9 +54,8 @@ jobs:
         ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         BLUESKY_HANDLE: ${{ secrets.BLUESKY_HANDLE }}
         BLUESKY_PASSWORD: ${{ secrets.BLUESKY_PASSWORD }}
-        # Pass the manual input to the script
+        # Pass the full dropdown string to Python
         FORCED_SLOT: ${{ inputs.force_slot }}
-        # Tell the script if this is a manual run
         IS_MANUAL: ${{ github.event_name == 'workflow_dispatch' }}
       run: python post_generator.py
 
@@ -50,5 +64,4 @@ jobs:
         git config --global user.name "RetroBot-Action"
         git config --global user.email "bot@nostalgia.icu"
         git add *.json
-        # Only commit if history files changed
         git diff --quiet && git diff --staged --quiet || (git commit -m "Update bot history [skip ci]" && git push)
