@@ -66,8 +66,8 @@ MONDAY_FEATURES = [
         "img": "images/ad_radio.jpg",
         "texts": [
             "Vibe to the classics. 📻 Our 24/7 Retro Radio plays the best video game soundtracks and chiptunes all day long.",
-            "Work, study, or relax to the sounds of 8-bit and 16-bit mastery. Tune in to Nostalgia Radio now! 🎵",
-            "The soundtrack of your childhood is streaming live. 🎧 Listen to pure VGM goodness on our Retro Radio."
+            "Work, study, or relax to the sounds of 8-bit and 16-bit mastery. Tune in to Nostalgia.ICU Radio now! 🎵",
+            "The soundtrack of your childhood is streaming live. 🎧 Listen to pure VGM goodness on our Radio."
         ],
         "tag": "#VGM"
     },
@@ -87,11 +87,11 @@ MONDAY_FEATURES = [
         "url": "https://www.nostalgia.icu/quest/",
         "img": "images/ad_quest.jpg",
         "texts": [
-            "Enter the dungeon! ⚔️ Join the Nostalgia Quest, an infinite crawler where your retro knowledge is your weapon.",
-            "Earn badges and climb the leaderboards. 🛡️ Prove your mastery in our RPG-style Nostalgia Quest.",
+            "Enter the dungeon! ⚔️ Join the Nostalgia Quest, an infinite crawler where your skills will be tested to the max.",
+            "Earn and share your street cred. 🛡️ Prove your mastery in our Dungeon Crawler Nostalgia Quest.",
             "Adventure awaits. Clear floors, collect loot, and challenge yourself in the Nostalgia Quest."
         ],
-        "tag": "#RetroRPG"
+        "tag": "#DungeonCrawler"
     },
     {
         "name": "Gaming History",
@@ -109,8 +109,8 @@ MONDAY_FEATURES = [
         "url": "https://www.nostalgia.icu/database/",
         "img": "images/ad_database.jpg",
         "texts": [
-            "The ultimate index. 💾 Search our massive Database to find details on almost every game ever made.",
-            "Need specs, release dates, or screenshots? 💽 Our Game Database has the data you're looking for.",
+            "The ultimate index. 💾 Search our massive Database to find details on almost every Retro game ever made.",
+            "Need info, release dates, or other info? 💽 Our Game Database has the data you're looking for.",
             "Cataloging the past. Explore our comprehensive Database and discover games you missed."
         ],
         "tag": "#GameDB"
@@ -120,7 +120,7 @@ MONDAY_FEATURES = [
         "url": "https://www.nostalgia.icu/quest/",
         "img": "images/ad_challenge.jpg",
         "texts": [
-            "Test your eyes! 👀 Can you identify the game from a single zoomed-in pixel art image?",
+            "Test your eyes! 👀 Can you identify the games from a pixelated screenshot? Test your might.",
             "Take the Daily Pixel Challenge. 🧩 Guess the retro classic and keep your streak alive.",
             "Think you know your sprites? Prove it in our Pixel Challenge and show off your retro IQ."
         ],
