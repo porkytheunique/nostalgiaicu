@@ -117,7 +117,7 @@ MONDAY_FEATURES = [
     },
     {
         "name": "Pixel Challenge",
-        "url": "https://www.nostalgia.icu/challenge/",
+        "url": "https://www.nostalgia.icu/quest/",
         "img": "images/ad_challenge.jpg",
         "texts": [
             "Test your eyes! 👀 Can you identify the game from a single zoomed-in pixel art image?",
