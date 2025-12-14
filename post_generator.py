@@ -36,7 +36,7 @@ SCHEDULE = {
     6: {10: 11, 15: 12}  # Sun
 }
 
-# --- MONDAY FEATURE DEFINITIONS (Updated with User Text & Tags) ---
+# --- MONDAY FEATURE DEFINITIONS ---
 MONDAY_FEATURES = [
     {
         "name": "Magazine Library",
@@ -141,6 +141,22 @@ PLATFORM_TAGS = {
     "Game Boy": "#GameBoy", "Game Boy Advance": "#GBA", "Sega Genesis": "#SegaGenesis",
     "Dreamcast": "#Dreamcast", "PC": "#PCGaming"
 }
+
+# --- NEW LISTS FOR VARIETY ---
+CONSOLE_IMAGES = [
+    "images/console_nes.jpg", "images/console_snes.jpg", "images/console_n64.jpg",
+    "images/console_gamecube.jpg", "images/console_ps1.jpg", "images/console_ps2.jpg",
+    "images/console_xbox.jpg", "images/console_genesis.jpg", "images/console_dreamcast.jpg"
+]
+
+FACT_INTROS = [
+    "Did you know?",
+    "Retro Fact:",
+    "Gaming History:",
+    "Fun Fact:",
+    "Trivia Time:",
+    "Classic Gaming Fact:"
+]
 
 RIVAL_PAIRS = [
     {"p1": "27", "p2": "83", "t1": "#PS1", "t2": "#N64"},      # PS1 vs N64
@@ -305,7 +321,6 @@ def run_slot_1_ad(bsky):
     tb.link(feature['url'], feature['url'])
     tb.text("\n\n")
     
-    # --- UPDATED TAG LOGIC ---
     # Loop through the list of tags provided in MONDAY_FEATURES
     for tag in feature.get('tags', []):
         tb.tag(tag, tag.replace("#", ""))
@@ -325,18 +340,82 @@ def run_slot_1_ad(bsky):
         logger.info(f"✅ Slot 1 Posted: {feature['name']}")
 
 def run_generic_q(bsky):
+    """
+    Dual Mode Generic Question:
+    Mode A (50%): Broad "Engagement Bait" topic + Random Console Image (Vibe).
+    Mode B (50%): Specific Console Nostalgia + Matching Console Image.
+    """
     used_q = load_json('history_questions.json', [])
-    topic = random.choice([t for t in GENERIC_TOPICS if t not in used_q[-5:]])
-    prompt = f"Write a short, engaging question for retro gamers about '{topic}'. Under 200 chars. DO NOT use hashtags. DO NOT use quotation marks."
-    text = get_claude_text(prompt) or f"What's your take on {topic} in retro games?"
+    
+    # Check which console images actually exist
+    valid_images = [img for img in CONSOLE_IMAGES if os.path.exists(img)]
+    
+    # --- DETERMINE MODE ---
+    # If we have console images, we can do the 50/50 split.
+    # If we don't have images yet, force Mode A (Topic) only.
+    mode = "topic"
+    if valid_images and random.random() > 0.5:
+        mode = "console"
+
+    img_embed = None
+    topic_text = ""
+
+    if mode == "console":
+        # MODE B: Specific Console Match
+        # 1. Pick the image first
+        chosen_img = random.choice(valid_images)
+        
+        # 2. Extract console name from filename (e.g., "images/console_ps1.jpg" -> "PS1")
+        console_name = chosen_img.replace("images/console_", "").replace(".jpg", "").upper()
+        # Clean up names for the AI prompt
+        if "NES" in console_name: console_name = "Nintendo Entertainment System (NES)"
+        elif "SNES" in console_name: console_name = "Super Nintendo (SNES)"
+        elif "N64" in console_name: console_name = "Nintendo 64"
+        elif "GENESIS" in console_name: console_name = "Sega Genesis"
+        
+        # 3. Generate specific prompt
+        topic_text = f"the {console_name}"
+        prompt = f"Write a short, nostalgic question specifically about the {console_name}. Under 200 chars. DO NOT use hashtags. DO NOT use quotation marks."
+        
+        # 4. Attach the matching image
+        with open(chosen_img, 'rb') as f:
+            upload = bsky.upload_blob(f.read())
+            img_embed = models.AppBskyEmbedImages.Main(images=[models.AppBskyEmbedImages.Image(alt=f"{console_name} Console", image=upload.blob)])
+            
+        logger.info(f"🎮 Mode: Console Specific ({console_name})")
+
+    else:
+        # MODE A: Broad Engagement Topic
+        # 1. Pick a topic
+        topic = random.choice([t for t in GENERIC_TOPICS if t not in used_q[-5:]])
+        topic_text = topic
+        
+        # 2. Generate broad prompt
+        prompt = f"Write a broad, engaging question for retro gamers about '{topic}'. It should apply to ANY console. Under 200 chars. DO NOT use hashtags. DO NOT use quotation marks."
+        
+        # 3. Attach a RANDOM console image just for "Retro Vibes" (if available)
+        if valid_images:
+            chosen_img = random.choice(valid_images)
+            with open(chosen_img, 'rb') as f:
+                upload = bsky.upload_blob(f.read())
+                img_embed = models.AppBskyEmbedImages.Main(images=[models.AppBskyEmbedImages.Image(alt="Retro Console", image=upload.blob)])
+        
+        logger.info(f"🗣️ Mode: Broad Topic ({topic})")
+        
+        # Track history for topics only
+        used_q.append(topic)
+        save_json('history_questions.json', used_q[-50:])
+
+    # --- GENERATE & POST ---
+    text = get_claude_text(prompt) or f"What's your take on {topic_text}?"
+    
     tb = client_utils.TextBuilder()
     tb.text(text + "\n\n")
     tb.tag("#Retro", "Retro"); tb.text(" ")
     tb.tag("#RetroGaming", "RetroGaming")
-    bsky.send_post(tb)
-    used_q.append(topic)
-    save_json('history_questions.json', used_q[-50:])
-    logger.info(f"✅ Generic Q Posted: {topic}")
+    
+    bsky.send_post(tb, embed=img_embed)
+    logger.info(f"✅ Generic Q Posted ({mode}): {topic_text}")
 
 def run_rivalry(bsky):
     pair = random.choice(RIVAL_PAIRS)
@@ -448,20 +527,32 @@ def run_single_game_post(bsky, slot_type):
     logger.info(f"✅ {slot_type} Posted: {game['name']}")
 
 def run_fact(bsky):
+    # UPDATED: Varied Intros + Screenshot + Ending Question
     game_list = fetch_games_from_rawg(1)
     if not game_list: return
     game = game_list[0]
     
-    prompt = f"Tell a surprising, short trivia fact about the video game '{game['name']}'. Under 200 chars. DO NOT use hashtags. DO NOT use quotation marks."
+    intro = random.choice(FACT_INTROS)
+    prompt = f"Tell a surprising, short trivia fact about the video game '{game['name']}'. Under 200 chars. DO NOT use hashtags. DO NOT use quotation marks. End with a short engaging question asking for the user's opinion."
     text = get_claude_text(prompt) or f"Did you know {game['name']} is considered a classic?"
     
     imgs_to_upload = []
     
-    main_img = download_image(game['background_image'])
+    # 1. Main Image
+    main_url = game['background_image']
+    main_img = download_image(main_url)
     if main_img:
         blob = bsky.upload_blob(image_to_bytes(main_img)).blob
         imgs_to_upload.append(models.AppBskyEmbedImages.Image(alt=f"{game['name']} Box Art", image=blob))
+        
+    # 2. Random Screenshot (Added for more visual flair)
+    s_url = get_distinct_screenshot(game, exclude_url=main_url)
+    s_img = download_image(s_url)
+    if s_img:
+        blob = bsky.upload_blob(image_to_bytes(s_img)).blob
+        imgs_to_upload.append(models.AppBskyEmbedImages.Image(alt="Gameplay", image=blob))
     
+    # 3. Promo Card
     if os.path.exists("images/promo_ad.jpg"):
         with open("images/promo_ad.jpg", "rb") as f:
             blob = bsky.upload_blob(f.read()).blob
@@ -471,7 +562,7 @@ def run_fact(bsky):
     plat_tags = get_platform_tags(game)
 
     tb = client_utils.TextBuilder()
-    tb.text(f"Did you know? 🧠\n\n{text}\n\n")
+    tb.text(f"{intro} 🧠\n\n{text}\n\n")
     tb.tag("#Retro", "Retro"); tb.text(" ")
     tb.tag("#RetroGaming", "RetroGaming"); tb.text(" ")
     
@@ -479,7 +570,7 @@ def run_fact(bsky):
         tb.tag(tag, tag.replace("#", ""))
         tb.text(" ")
         
-    tb.tag("#Trivia", "Trivia")
+    tb.tag("#FunFact", "FunFact")
     
     if imgs_to_upload:
         bsky.send_post(tb, embed=models.AppBskyEmbedImages.Main(images=imgs_to_upload))
