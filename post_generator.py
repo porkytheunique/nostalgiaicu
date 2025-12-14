@@ -47,7 +47,7 @@ MONDAY_FEATURES = [
             "Remember the hype? Revisit the golden era of gaming journalism in our digital Magazine Library. 📰",
             "From strategy guides to old ads, explore the print heritage of video games in our Library."
         ],
-        "tag": "#RetroMagazines"
+        "tags": ["#Retro", "#RetroGaming", "#Nostalgia", "#Library"]
     },
     {
         "name": "Retro Media Player",
@@ -58,7 +58,7 @@ MONDAY_FEATURES = [
             "Your portal to broadcast history. 📡 Catch documentaries, game promos, and TV ads from the CRT era.",
             "Need something to watch? Our Retro Media Player streams vintage content, cartoons, and gameplay 24/7."
         ],
-        "tag": "#RetroTV"
+        "tags": ["#Retro", "#RetroGaming", "#Nostalgia", "#RetroTV"]
     },
     {
         "name": "Retro Radio",
@@ -69,7 +69,7 @@ MONDAY_FEATURES = [
             "Work, study, or relax to the sounds of 8-bit and 16-bit mastery. Tune in to Nostalgia.ICU Radio now! 🎵",
             "The soundtrack of your childhood is streaming live. 🎧 Listen to pure VGM goodness on our Radio."
         ],
-        "tag": "#VGM"
+        "tags": ["#Retro", "#RetroGaming", "#Nostalgia", "#Radio"]
     },
     {
         "name": "System Advisor",
@@ -80,7 +80,7 @@ MONDAY_FEATURES = [
             "Find the value of your old carts or get tech support for vintage hardware. Our Advisor is online. 💡",
             "Not sure what to play next? Ask our System Curator to unearth a hidden gem just for you."
         ],
-        "tag": "#RetroHelp"
+        "tags": ["#Retro", "#RetroGaming", "#Nostalgia", "#Advisor"]
     },
     {
         "name": "Nostalgia Quest",
@@ -91,7 +91,7 @@ MONDAY_FEATURES = [
             "Earn and share your street cred. 🛡️ Prove your mastery in our Dungeon Crawler Nostalgia Quest.",
             "Adventure awaits. Clear floors, collect loot, and challenge yourself in the Nostalgia Quest."
         ],
-        "tag": "#DungeonCrawler"
+        "tags": ["#Retro", "#RetroGaming", "#Nostalgia", "#Quest"]
     },
     {
         "name": "Gaming History",
@@ -102,7 +102,7 @@ MONDAY_FEATURES = [
             "Travel back in time. ⏳ See what happened today in video game history with our daily chronicle.",
             "Celebrate the anniversaries of the games that defined us. Check today's releases in the History section."
         ],
-        "tag": "#GamingHistory"
+        "tags": ["#Retro", "#RetroGaming", "#Nostalgia", "#GamingHistory"]
     },
     {
         "name": "Game Database",
@@ -113,7 +113,7 @@ MONDAY_FEATURES = [
             "Need info, release dates, or other info? 💽 Our Game Database has the data you're looking for.",
             "Cataloging the past. Explore our comprehensive Database and discover games you missed."
         ],
-        "tag": "#GameDB"
+        "tags": ["#Retro", "#RetroGaming", "#Nostalgia", "#GameDB"]
     },
     {
         "name": "Pixel Challenge",
@@ -124,7 +124,7 @@ MONDAY_FEATURES = [
             "Take the Daily Pixel Challenge. 🧩 Guess the retro classic and keep your streak alive.",
             "Think you know your sprites? Prove it in our Pixel Challenge and show off your retro IQ."
         ],
-        "tag": "#PixelArt"
+        "tags": ["#Retro", "#RetroGaming", "#Nostalgia", "#PixelArt"]
     }
 ]
 
