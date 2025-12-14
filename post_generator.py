@@ -38,7 +38,6 @@ SCHEDULE = {
 
 # --- MONDAY FEATURE DEFINITIONS ---
 MONDAY_FEATURES = [
-    # 1. Library
     {
         "name": "Magazine Library",
         "url": "https://www.nostalgia.icu/library/",
@@ -50,7 +49,6 @@ MONDAY_FEATURES = [
         ],
         "tag": "#RetroMagazines"
     },
-    # 2. Media Player
     {
         "name": "Retro Media Player",
         "url": "https://www.nostalgia.icu/media/",
@@ -62,7 +60,6 @@ MONDAY_FEATURES = [
         ],
         "tag": "#RetroTV"
     },
-    # 3. Radio
     {
         "name": "Retro Radio",
         "url": "https://www.nostalgia.icu/radio/",
@@ -74,7 +71,6 @@ MONDAY_FEATURES = [
         ],
         "tag": "#VGM"
     },
-    # 4. Advisor
     {
         "name": "System Advisor",
         "url": "https://www.nostalgia.icu/advisor/",
@@ -86,7 +82,6 @@ MONDAY_FEATURES = [
         ],
         "tag": "#RetroHelp"
     },
-    # 5. Quest
     {
         "name": "Nostalgia Quest",
         "url": "https://www.nostalgia.icu/quest/",
@@ -94,11 +89,10 @@ MONDAY_FEATURES = [
         "texts": [
             "Enter the dungeon! ⚔️ Join the Nostalgia Quest, an infinite crawler where your retro knowledge is your weapon.",
             "Earn badges and climb the leaderboards. 🛡️ Prove your mastery in our RPG-style Nostalgia Quest.",
-            "Adventure awaits. clear floors, collect loot, and challenge yourself in the Nostalgia Quest."
+            "Adventure awaits. Clear floors, collect loot, and challenge yourself in the Nostalgia Quest."
         ],
         "tag": "#RetroRPG"
     },
-    # 6. History
     {
         "name": "Gaming History",
         "url": "https://www.nostalgia.icu/history/",
@@ -110,7 +104,6 @@ MONDAY_FEATURES = [
         ],
         "tag": "#GamingHistory"
     },
-    # 7. Database
     {
         "name": "Game Database",
         "url": "https://www.nostalgia.icu/database/",
@@ -122,7 +115,6 @@ MONDAY_FEATURES = [
         ],
         "tag": "#GameDB"
     },
-    # 8. Pixel Challenge
     {
         "name": "Pixel Challenge",
         "url": "https://www.nostalgia.icu/challenge/",
@@ -178,7 +170,9 @@ def get_claude_text(prompt):
             messages=[{"role": "user", "content": prompt}]
         )
         text = msg.content[0].text.strip()
-        return text.replace("#", "")
+        # STRIP QUOTES AND HASHTAGS to clean up output
+        text = text.replace("#", "").replace('"', '').replace("'", "")
+        return text
     except Exception as e:
         logger.error(f"Claude Error: {e}")
         return None
@@ -269,14 +263,11 @@ def fetch_games_from_rawg(count=1, platform_ids=None):
 
 # --- SLOT HANDLERS ---
 def run_slot_1_ad(bsky):
-    """Monday 10:00: Rotates through 8 website features with varied text."""
     history = load_json('history_ads.json', {'last_index': -1})
     idx = (history['last_index'] + 1) % len(MONDAY_FEATURES)
     feature = MONDAY_FEATURES[idx]
     
-    # Select one of the 3 random messages
     message = random.choice(feature['texts'])
-    
     logger.info(f"📢 Preparing Monday Ad for: {feature['name']}")
 
     tb = client_utils.TextBuilder()
@@ -284,7 +275,6 @@ def run_slot_1_ad(bsky):
     tb.text("\n\n🔗 Visit: ")
     tb.link(feature['url'], feature['url'])
     tb.text("\n\n")
-    # UPDATED TAGS HERE
     tb.tag("#Retro", "Retro"); tb.text(" ")
     tb.tag("#RetroGaming", "RetroGaming"); tb.text(" ")
     tb.tag(feature['tag'], feature['tag'].replace("#", ""))
@@ -305,7 +295,7 @@ def run_slot_1_ad(bsky):
 def run_generic_q(bsky):
     used_q = load_json('history_questions.json', [])
     topic = random.choice([t for t in GENERIC_TOPICS if t not in used_q[-5:]])
-    prompt = f"Write a short, engaging question for retro gamers about '{topic}'. Under 200 chars. DO NOT use hashtags."
+    prompt = f"Write a short, engaging question for retro gamers about '{topic}'. Under 200 chars. DO NOT use hashtags. DO NOT use quotation marks."
     text = get_claude_text(prompt) or f"What's your take on {topic} in retro games?"
     tb = client_utils.TextBuilder()
     tb.text(text + "\n\n")
@@ -374,12 +364,12 @@ def run_single_game_post(bsky, slot_type):
     configs = {
         "Unpopular": {"prompt": "unpopular opinion about difficulty or design", "tag": "#UnpopularOpinion"},
         "Obscure": {"prompt": "why this is a hidden gem", "tag": "#HiddenGem"},
-        "Aesthetic": {"prompt": "praise the art style/graphics", "tag": "#PixelArt"},
+        "Aesthetic": {"prompt": "praise the art style, graphics, or atmosphere (mention if it is pixel art or low-poly 3D)", "tag": "#RetroAesthetics"},
         "Memory": {"prompt": "ask for a specific childhood memory", "tag": None}
     }
     cfg = configs[slot_type]
     
-    prompt = f"Write a Bluesky post about '{game['name']}'. Theme: {cfg['prompt']}. Under 240 chars. DO NOT use hashtags."
+    prompt = f"Write a Bluesky post about '{game['name']}'. Theme: {cfg['prompt']}. Under 240 chars. DO NOT use hashtags. DO NOT use quotation marks."
     text = get_claude_text(prompt) or f"Remember {game['name']}?"
     
     imgs_to_upload = []
@@ -421,12 +411,28 @@ def run_single_game_post(bsky, slot_type):
     logger.info(f"✅ {slot_type} Posted: {game['name']}")
 
 def run_fact(bsky):
+    # UPDATED: Now fetches an image!
     game_list = fetch_games_from_rawg(1)
     if not game_list: return
     game = game_list[0]
-    prompt = f"Tell a surprising, short trivia fact about the video game '{game['name']}'. Under 200 chars. DO NOT use hashtags."
+    
+    prompt = f"Tell a surprising, short trivia fact about the video game '{game['name']}'. Under 200 chars. DO NOT use hashtags. DO NOT use quotation marks."
     text = get_claude_text(prompt) or f"Did you know {game['name']} is considered a classic?"
     
+    imgs_to_upload = []
+    
+    # 1. Main Image (Box Art/Promo Art)
+    main_img = download_image(game['background_image'])
+    if main_img:
+        blob = bsky.upload_blob(image_to_bytes(main_img)).blob
+        imgs_to_upload.append(models.AppBskyEmbedImages.Image(alt=f"{game['name']} Box Art", image=blob))
+    
+    # 2. Promo Card (Optional, for branding)
+    if os.path.exists("images/promo_ad.jpg"):
+        with open("images/promo_ad.jpg", "rb") as f:
+            blob = bsky.upload_blob(f.read()).blob
+            imgs_to_upload.append(models.AppBskyEmbedImages.Image(alt="Nostalgia.icu", image=blob))
+
     plat_tag = get_platform_tag(game)
     tb = client_utils.TextBuilder()
     tb.text(f"Did you know? 🧠\n\n{text}\n\n")
@@ -435,7 +441,13 @@ def run_fact(bsky):
     tb.tag(plat_tag, plat_tag.replace("#", "")); tb.text(" ")
     tb.tag("#Trivia", "Trivia")
     
-    bsky.send_post(tb)
+    # Send post WITH images now
+    if imgs_to_upload:
+        bsky.send_post(tb, embed=models.AppBskyEmbedImages.Main(images=imgs_to_upload))
+    else:
+        # Fallback to text only if image download failed
+        bsky.send_post(tb)
+        
     used_f = load_json('history_facts.json', [])
     used_f.append(game['id'])
     save_json('history_facts.json', used_f)
@@ -444,7 +456,7 @@ def run_fact(bsky):
 def run_starter_pack(bsky):
     games = fetch_games_from_rawg(4)
     if len(games) < 4: return
-    prompt = "Ask: 'You have to delete one of these classics forever. Which one goes?' Under 200 chars. DO NOT use hashtags."
+    prompt = "Ask: 'You have to delete one of these classics forever. Which one goes?' Under 200 chars. DO NOT use hashtags. DO NOT use quotation marks."
     text = get_claude_text(prompt) or "One has to go. Which one do you choose?"
     
     imgs_to_upload = []
