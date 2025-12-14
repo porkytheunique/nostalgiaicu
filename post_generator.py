@@ -36,7 +36,7 @@ SCHEDULE = {
     6: {10: 11, 15: 12}  # Sun
 }
 
-# --- MONDAY FEATURE DEFINITIONS ---
+# --- MONDAY FEATURE DEFINITIONS (Updated with User Text & Tags) ---
 MONDAY_FEATURES = [
     {
         "name": "Magazine Library",
@@ -228,11 +228,37 @@ def create_collage(images, grid=(2,1)):
         return collage
     return images[0]
 
-def get_platform_tag(game_data):
+def get_platform_tags(game_data):
+    """
+    Returns a list of up to 2 hashtags.
+    Prioritizes Retro Consoles found in PLATFORM_TAGS.
+    Filters out modern consoles (PS4, Switch) because they aren't in the dict.
+    Allows matches like [#PCGaming, #PS1].
+    """
+    found_tags = []
+    
     for p in game_data.get('platforms', []):
         name = p['platform']['name']
-        if name in PLATFORM_TAGS: return PLATFORM_TAGS[name]
-    return "#RetroGaming"
+        
+        # Exact match (e.g., "PlayStation")
+        if name in PLATFORM_TAGS:
+            found_tags.append(PLATFORM_TAGS[name])
+        else:
+            # Partial match check (e.g. "Sega Genesis" vs "Genesis")
+            for key, val in PLATFORM_TAGS.items():
+                if key in name:
+                    found_tags.append(val)
+                    break
+    
+    # Remove duplicates
+    found_tags = list(set(found_tags))
+    
+    # If empty, default to RetroGaming
+    if not found_tags:
+        return ["#RetroGaming"]
+        
+    # If we found multiple, return up to 2 (e.g., #PCGaming and #PS1)
+    return found_tags[:2]
 
 def fetch_games_from_rawg(count=1, platform_ids=None):
     used_games = load_json('history_games.json', [])
@@ -263,11 +289,14 @@ def fetch_games_from_rawg(count=1, platform_ids=None):
 
 # --- SLOT HANDLERS ---
 def run_slot_1_ad(bsky):
+    """Monday 10:00: Rotates through 8 website features with varied text."""
     history = load_json('history_ads.json', {'last_index': -1})
     idx = (history['last_index'] + 1) % len(MONDAY_FEATURES)
     feature = MONDAY_FEATURES[idx]
     
+    # Select one of the 3 random messages
     message = random.choice(feature['texts'])
+    
     logger.info(f"📢 Preparing Monday Ad for: {feature['name']}")
 
     tb = client_utils.TextBuilder()
@@ -275,9 +304,12 @@ def run_slot_1_ad(bsky):
     tb.text("\n\n🔗 Visit: ")
     tb.link(feature['url'], feature['url'])
     tb.text("\n\n")
-    tb.tag("#Retro", "Retro"); tb.text(" ")
-    tb.tag("#RetroGaming", "RetroGaming"); tb.text(" ")
-    tb.tag(feature['tag'], feature['tag'].replace("#", ""))
+    
+    # --- UPDATED TAG LOGIC ---
+    # Loop through the list of tags provided in MONDAY_FEATURES
+    for tag in feature.get('tags', []):
+        tb.tag(tag, tag.replace("#", ""))
+        tb.text(" ")
     
     img_bytes = None
     if os.path.exists(feature['img']):
@@ -397,21 +429,25 @@ def run_single_game_post(bsky, slot_type):
     else:
         logger.warning("⚠️ Promo image 'images/promo_ad.jpg' not found. Skipping.")
 
-    plat_tag = get_platform_tag(game)
+    # UPDATED: Get list of up to 2 platform tags
+    plat_tags = get_platform_tags(game)
+    
     tb = client_utils.TextBuilder()
     tb.text(text + "\n\n")
     tb.tag("#Retro", "Retro"); tb.text(" ")
     tb.tag("#RetroGaming", "RetroGaming"); tb.text(" ")
-    tb.tag(plat_tag, plat_tag.replace("#", ""))
-    if cfg['tag']:
+    
+    for tag in plat_tags:
+        tb.tag(tag, tag.replace("#", ""))
         tb.text(" ")
+        
+    if cfg['tag']:
         tb.tag(cfg['tag'], cfg['tag'].replace("#", ""))
     
     bsky.send_post(tb, embed=models.AppBskyEmbedImages.Main(images=imgs_to_upload[:4]))
     logger.info(f"✅ {slot_type} Posted: {game['name']}")
 
 def run_fact(bsky):
-    # UPDATED: Now fetches an image!
     game_list = fetch_games_from_rawg(1)
     if not game_list: return
     game = game_list[0]
@@ -421,31 +457,33 @@ def run_fact(bsky):
     
     imgs_to_upload = []
     
-    # 1. Main Image (Box Art/Promo Art)
     main_img = download_image(game['background_image'])
     if main_img:
         blob = bsky.upload_blob(image_to_bytes(main_img)).blob
         imgs_to_upload.append(models.AppBskyEmbedImages.Image(alt=f"{game['name']} Box Art", image=blob))
     
-    # 2. Promo Card (Optional, for branding)
     if os.path.exists("images/promo_ad.jpg"):
         with open("images/promo_ad.jpg", "rb") as f:
             blob = bsky.upload_blob(f.read()).blob
             imgs_to_upload.append(models.AppBskyEmbedImages.Image(alt="Nostalgia.icu", image=blob))
 
-    plat_tag = get_platform_tag(game)
+    # UPDATED: Get list of up to 2 platform tags
+    plat_tags = get_platform_tags(game)
+
     tb = client_utils.TextBuilder()
     tb.text(f"Did you know? 🧠\n\n{text}\n\n")
     tb.tag("#Retro", "Retro"); tb.text(" ")
     tb.tag("#RetroGaming", "RetroGaming"); tb.text(" ")
-    tb.tag(plat_tag, plat_tag.replace("#", "")); tb.text(" ")
+    
+    for tag in plat_tags:
+        tb.tag(tag, tag.replace("#", ""))
+        tb.text(" ")
+        
     tb.tag("#Trivia", "Trivia")
     
-    # Send post WITH images now
     if imgs_to_upload:
         bsky.send_post(tb, embed=models.AppBskyEmbedImages.Main(images=imgs_to_upload))
     else:
-        # Fallback to text only if image download failed
         bsky.send_post(tb)
         
     used_f = load_json('history_facts.json', [])
