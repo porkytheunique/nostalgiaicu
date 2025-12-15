@@ -25,15 +25,19 @@ ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY")
 BSKY_HANDLE = os.environ.get("BLUESKY_HANDLE")
 BSKY_PASSWORD = os.environ.get("BLUESKY_PASSWORD")
 
-# --- CONSTANTS & SCHEDULE ---
+# --- CONSTANTS & SCHEDULE (3 Posts Per Day) ---
+# Times are UTC. 
+# 09:00 = Morning Visuals
+# 15:00 = Afternoon Engagement
+# 21:00 = Evening History/Facts
 SCHEDULE = {
-    0: {10: 1, 15: 2},   # Mon
-    1: {10: 3},          # Tue
-    2: {10: 4, 15: 5},   # Wed
-    3: {10: 6},          # Thu
-    4: {10: 7, 15: 8},   # Fri
-    5: {10: 9, 15: 10},  # Sat
-    6: {10: 11, 15: 12}  # Sun
+    0: {9: 1, 15: 2, 21: 13},   # Mon: Ad, Generic Q, On This Day
+    1: {9: 9, 15: 3, 21: 14},   # Tue: Aesthetic, Rivalry, Fact
+    2: {9: 4, 15: 17, 21: 13},  # Wed: Unpopular, Generic Q, On This Day
+    3: {9: 6, 15: 18, 21: 14},  # Thu: Obscure, Rivalry, Fact
+    4: {9: 7, 15: 8, 21: 13},   # Fri: Starter Pack, Generic Q, On This Day
+    5: {9: 9, 15: 10, 21: 15},  # Sat: Aesthetic, Fact, Memory
+    6: {9: 11, 15: 12, 21: 13}  # Sun: Memory, Fact, On This Day
 }
 
 # --- MONDAY FEATURE DEFINITIONS ---
@@ -134,19 +138,24 @@ GENERIC_TOPICS = [
     "Video Rental Stores", "Strategy Guides", "Save Points", "Easter Eggs", "Start Menus"
 ]
 
+# --- UPDATED PLATFORM TAGS ---
 PLATFORM_TAGS = {
     "PlayStation": "#PS1", "PlayStation 2": "#PS2", "PlayStation 3": "#PS3",
     "Xbox": "#Xbox", "Xbox 360": "#Xbox360",
     "SNES": "#SNES", "NES": "#NES", "Nintendo 64": "#N64", "GameCube": "#GameCube",
-    "Game Boy": "#GameBoy", "Game Boy Advance": "#GBA", "Sega Genesis": "#SegaGenesis",
-    "Dreamcast": "#Dreamcast", "PC": "#PCGaming"
+    "Game Boy": "#GameBoy", "Game Boy Advance": "#GBA", "Game Boy Color": "#GameBoyColor",
+    "Sega Genesis": "#SegaGenesis", "Dreamcast": "#Dreamcast", "Sega Saturn": "#SegaSaturn",
+    "Sega CD": "#SegaCD", "Sega 32X": "#Sega32X",
+    "Neo Geo": "#NeoGeo", "TurboGrafx-16": "#TurboGrafx16", "PC": "#PCGaming"
 }
 
-# --- NEW LISTS FOR VARIETY ---
+# --- UPDATED CONSOLE IMAGES LIST ---
 CONSOLE_IMAGES = [
     "images/console_nes.jpg", "images/console_snes.jpg", "images/console_n64.jpg",
     "images/console_gamecube.jpg", "images/console_ps1.jpg", "images/console_ps2.jpg",
-    "images/console_xbox.jpg", "images/console_genesis.jpg", "images/console_dreamcast.jpg"
+    "images/console_xbox.jpg", "images/console_genesis.jpg", "images/console_dreamcast.jpg",
+    "images/console_saturn.jpg", "images/console_turbografx.jpg", "images/console_neogeo.jpg",
+    "images/console_segacd.jpg", "images/console_32x.jpg", "images/console_gbc.jpg"
 ]
 
 FACT_INTROS = [
@@ -186,7 +195,6 @@ def get_claude_text(prompt):
             messages=[{"role": "user", "content": prompt}]
         )
         text = msg.content[0].text.strip()
-        # STRIP QUOTES AND HASHTAGS to clean up output
         text = text.replace("#", "").replace('"', '').replace("'", "")
         return text
     except Exception as e:
@@ -248,8 +256,7 @@ def get_platform_tags(game_data):
     """
     Returns a list of up to 2 hashtags.
     Prioritizes Retro Consoles found in PLATFORM_TAGS.
-    Filters out modern consoles (PS4, Switch) because they aren't in the dict.
-    Allows matches like [#PCGaming, #PS1].
+    Ensures #PCGaming is always the last tag if present.
     """
     found_tags = []
     
@@ -269,21 +276,31 @@ def get_platform_tags(game_data):
     # Remove duplicates
     found_tags = list(set(found_tags))
     
+    # PC Gaming Sort Fix: Move #PCGaming to the end if other tags exist
+    if "#PCGaming" in found_tags and len(found_tags) > 1:
+        found_tags.remove("#PCGaming")
+        found_tags.append("#PCGaming")
+    
     # If empty, default to RetroGaming
     if not found_tags:
         return ["#RetroGaming"]
         
-    # If we found multiple, return up to 2 (e.g., #PCGaming and #PS1)
+    # If we found multiple, return up to 2
     return found_tags[:2]
 
 def fetch_games_from_rawg(count=1, platform_ids=None):
     used_games = load_json('history_games.json', [])
     found_games = []
     
+    # Expanded Platform List:
+    # 27(PS1), 15(PS2), 83(N64), 79(SNES), 24(GBA), 167(Genesis), 80(Xbox), 106(Dreamcast)
+    # 49(NES), 105(GameCube), 109(TurboGrafx), 107(Saturn), 12(NeoGeo), 119(SegaCD), 117(32X), 43(GBC)
+    all_retro_platforms = "27,15,83,79,24,167,80,106,49,105,109,107,12,119,117,43"
+    
     for _ in range(10): 
         if len(found_games) >= count: break
         page = random.randint(1, 200)
-        platforms = platform_ids if platform_ids else "27,15,83,79,24,167,80,106"
+        platforms = platform_ids if platform_ids else all_retro_platforms
         url = f"https://api.rawg.io/api/games?key={RAWG_API_KEY}&platforms={platforms}&ordering=-rating&page_size={count*2}&page={page}"
         try:
             data = requests.get(url).json()
@@ -303,16 +320,47 @@ def fetch_games_from_rawg(count=1, platform_ids=None):
         
     return found_games
 
+def fetch_on_this_day_game():
+    """
+    Fetches a game released on today's month/day in a random retro year (1985-2005).
+    """
+    now = datetime.now()
+    month = now.month
+    day = now.day
+    
+    # Try up to 5 times to find a game on this specific day in different years
+    for _ in range(5):
+        year = random.randint(1985, 2005)
+        date_str = f"{year}-{month:02d}-{day:02d}"
+        
+        url = f"https://api.rawg.io/api/games?key={RAWG_API_KEY}&dates={date_str},{date_str}&ordering=-added&page_size=5"
+        
+        try:
+            data = requests.get(url).json()
+            results = data.get('results', [])
+            if results:
+                # Pick the most popular one (first result) or random from top 3
+                game = random.choice(results[:3])
+                if game.get('background_image'):
+                    # Check details to get screenshots
+                    full_game_url = f"https://api.rawg.io/api/games/{game['id']}?key={RAWG_API_KEY}"
+                    full_details = requests.get(full_game_url).json()
+                    
+                    # Store finding year for the prompt
+                    full_details['release_year'] = year 
+                    return full_details
+        except Exception as e:
+            logger.error(f"History Fetch Error: {e}")
+            
+    return None
+
 # --- SLOT HANDLERS ---
 def run_slot_1_ad(bsky):
-    """Monday 10:00: Rotates through 8 website features with varied text."""
     history = load_json('history_ads.json', {'last_index': -1})
     idx = (history['last_index'] + 1) % len(MONDAY_FEATURES)
     feature = MONDAY_FEATURES[idx]
     
-    # Select one of the 3 random messages
     message = random.choice(feature['texts'])
-    
     logger.info(f"📢 Preparing Monday Ad for: {feature['name']}")
 
     tb = client_utils.TextBuilder()
@@ -321,7 +369,6 @@ def run_slot_1_ad(bsky):
     tb.link(feature['url'], feature['url'])
     tb.text("\n\n")
     
-    # Loop through the list of tags provided in MONDAY_FEATURES
     for tag in feature.get('tags', []):
         tb.tag(tag, tag.replace("#", ""))
         tb.text(" ")
@@ -340,19 +387,9 @@ def run_slot_1_ad(bsky):
         logger.info(f"✅ Slot 1 Posted: {feature['name']}")
 
 def run_generic_q(bsky):
-    """
-    Dual Mode Generic Question:
-    Mode A (50%): Broad "Engagement Bait" topic + Random Console Image (Vibe).
-    Mode B (50%): Specific Console Nostalgia + Matching Console Image.
-    """
     used_q = load_json('history_questions.json', [])
-    
-    # Check which console images actually exist
     valid_images = [img for img in CONSOLE_IMAGES if os.path.exists(img)]
     
-    # --- DETERMINE MODE ---
-    # If we have console images, we can do the 50/50 split.
-    # If we don't have images yet, force Mode A (Topic) only.
     mode = "topic"
     if valid_images and random.random() > 0.5:
         mode = "console"
@@ -361,39 +398,30 @@ def run_generic_q(bsky):
     topic_text = ""
 
     if mode == "console":
-        # MODE B: Specific Console Match
-        # 1. Pick the image first
         chosen_img = random.choice(valid_images)
-        
-        # 2. Extract console name from filename (e.g., "images/console_ps1.jpg" -> "PS1")
         console_name = chosen_img.replace("images/console_", "").replace(".jpg", "").upper()
-        # Clean up names for the AI prompt
         if "NES" in console_name: console_name = "Nintendo Entertainment System (NES)"
         elif "SNES" in console_name: console_name = "Super Nintendo (SNES)"
         elif "N64" in console_name: console_name = "Nintendo 64"
         elif "GENESIS" in console_name: console_name = "Sega Genesis"
+        elif "SATURN" in console_name: console_name = "Sega Saturn"
+        elif "DREAMCAST" in console_name: console_name = "Sega Dreamcast"
+        elif "TURBOGRAFX" in console_name: console_name = "TurboGrafx-16"
+        elif "NEOGEO" in console_name: console_name = "Neo Geo"
         
-        # 3. Generate specific prompt
         topic_text = f"the {console_name}"
         prompt = f"Write a short, nostalgic question specifically about the {console_name}. Under 200 chars. DO NOT use hashtags. DO NOT use quotation marks."
         
-        # 4. Attach the matching image
         with open(chosen_img, 'rb') as f:
             upload = bsky.upload_blob(f.read())
             img_embed = models.AppBskyEmbedImages.Main(images=[models.AppBskyEmbedImages.Image(alt=f"{console_name} Console", image=upload.blob)])
-            
         logger.info(f"🎮 Mode: Console Specific ({console_name})")
 
     else:
-        # MODE A: Broad Engagement Topic
-        # 1. Pick a topic
         topic = random.choice([t for t in GENERIC_TOPICS if t not in used_q[-5:]])
         topic_text = topic
+        prompt = f"Write a broad, engaging question for retro gamers about '{topic}'. Apply to ANY console. Under 200 chars. DO NOT use hashtags. DO NOT use quotation marks."
         
-        # 2. Generate broad prompt
-        prompt = f"Write a broad, engaging question for retro gamers about '{topic}'. It should apply to ANY console. Under 200 chars. DO NOT use hashtags. DO NOT use quotation marks."
-        
-        # 3. Attach a RANDOM console image just for "Retro Vibes" (if available)
         if valid_images:
             chosen_img = random.choice(valid_images)
             with open(chosen_img, 'rb') as f:
@@ -401,12 +429,9 @@ def run_generic_q(bsky):
                 img_embed = models.AppBskyEmbedImages.Main(images=[models.AppBskyEmbedImages.Image(alt="Retro Console", image=upload.blob)])
         
         logger.info(f"🗣️ Mode: Broad Topic ({topic})")
-        
-        # Track history for topics only
         used_q.append(topic)
         save_json('history_questions.json', used_q[-50:])
 
-    # --- GENERATE & POST ---
     text = get_claude_text(prompt) or f"What's your take on {topic_text}?"
     
     tb = client_utils.TextBuilder()
@@ -508,11 +533,17 @@ def run_single_game_post(bsky, slot_type):
     else:
         logger.warning("⚠️ Promo image 'images/promo_ad.jpg' not found. Skipping.")
 
-    # UPDATED: Get list of up to 2 platform tags
     plat_tags = get_platform_tags(game)
     
     tb = client_utils.TextBuilder()
     tb.text(text + "\n\n")
+    
+    # Cheeky Link for Obscure games (30% chance)
+    if slot_type == "Obscure" and random.random() < 0.3:
+        tb.text("Uncovered in the Archive. 📂 Search your favorites: ")
+        tb.link("nostalgia.icu/database", "https://www.nostalgia.icu/database/")
+        tb.text("\n\n")
+
     tb.tag("#Retro", "Retro"); tb.text(" ")
     tb.tag("#RetroGaming", "RetroGaming"); tb.text(" ")
     
@@ -527,7 +558,6 @@ def run_single_game_post(bsky, slot_type):
     logger.info(f"✅ {slot_type} Posted: {game['name']}")
 
 def run_fact(bsky):
-    # UPDATED: Varied Intros + Screenshot + Ending Question
     game_list = fetch_games_from_rawg(1)
     if not game_list: return
     game = game_list[0]
@@ -537,32 +567,34 @@ def run_fact(bsky):
     text = get_claude_text(prompt) or f"Did you know {game['name']} is considered a classic?"
     
     imgs_to_upload = []
-    
-    # 1. Main Image
     main_url = game['background_image']
     main_img = download_image(main_url)
     if main_img:
         blob = bsky.upload_blob(image_to_bytes(main_img)).blob
         imgs_to_upload.append(models.AppBskyEmbedImages.Image(alt=f"{game['name']} Box Art", image=blob))
         
-    # 2. Random Screenshot (Added for more visual flair)
     s_url = get_distinct_screenshot(game, exclude_url=main_url)
     s_img = download_image(s_url)
     if s_img:
         blob = bsky.upload_blob(image_to_bytes(s_img)).blob
         imgs_to_upload.append(models.AppBskyEmbedImages.Image(alt="Gameplay", image=blob))
     
-    # 3. Promo Card
     if os.path.exists("images/promo_ad.jpg"):
         with open("images/promo_ad.jpg", "rb") as f:
             blob = bsky.upload_blob(f.read()).blob
             imgs_to_upload.append(models.AppBskyEmbedImages.Image(alt="Nostalgia.icu", image=blob))
 
-    # UPDATED: Get list of up to 2 platform tags
     plat_tags = get_platform_tags(game)
 
     tb = client_utils.TextBuilder()
     tb.text(f"{intro} 🧠\n\n{text}\n\n")
+    
+    # Cheeky Link for Facts (30% chance)
+    if random.random() < 0.3:
+        tb.text("More gaming history: ")
+        tb.link("nostalgia.icu/history", "https://www.nostalgia.icu/history/")
+        tb.text("\n\n")
+
     tb.tag("#Retro", "Retro"); tb.text(" ")
     tb.tag("#RetroGaming", "RetroGaming"); tb.text(" ")
     
@@ -581,6 +613,65 @@ def run_fact(bsky):
     used_f.append(game['id'])
     save_json('history_facts.json', used_f)
     logger.info(f"✅ Fact Posted: {game['name']}")
+
+def run_on_this_day(bsky):
+    """
+    NEW POST TYPE: Finds a game released on this Month/Day in a past year.
+    Includes a hard link to the History page.
+    """
+    game = fetch_on_this_day_game()
+    if not game:
+        # Fallback to a Fact if we can't find a date match (rare)
+        run_fact(bsky)
+        return
+
+    year = game['release_year']
+    prompt = f"Write a post celebrating that '{game['name']}' was released on this day in {year}. Be nostalgic. Under 200 chars. DO NOT use hashtags. DO NOT use quotation marks."
+    text = get_claude_text(prompt) or f"On this day in {year}, {game['name']} was released!"
+    
+    imgs_to_upload = []
+    
+    main_url = game['background_image']
+    main_img = download_image(main_url)
+    if main_img:
+        blob = bsky.upload_blob(image_to_bytes(main_img)).blob
+        imgs_to_upload.append(models.AppBskyEmbedImages.Image(alt=f"{game['name']} Box Art", image=blob))
+        
+    # Get extra screenshots
+    screens_added = 0
+    for shot in game.get('short_screenshots', []):
+        if screens_added >= 2: break
+        if shot['image'] == main_url: continue 
+        s_img = download_image(shot['image'])
+        if s_img:
+            blob = bsky.upload_blob(image_to_bytes(s_img)).blob
+            imgs_to_upload.append(models.AppBskyEmbedImages.Image(alt="Gameplay", image=blob))
+            screens_added += 1
+
+    if os.path.exists("images/promo_ad.jpg"):
+        with open("images/promo_ad.jpg", "rb") as f:
+            blob = bsky.upload_blob(f.read()).blob
+            imgs_to_upload.append(models.AppBskyEmbedImages.Image(alt="Nostalgia.icu", image=blob))
+
+    plat_tags = get_platform_tags(game)
+    
+    tb = client_utils.TextBuilder()
+    tb.text(f"📅 On This Day ({year})\n\n{text}\n\n")
+    tb.text("See what else launched today: ")
+    tb.link("nostalgia.icu/history", "https://www.nostalgia.icu/history/")
+    tb.text("\n\n")
+    
+    tb.tag("#Retro", "Retro"); tb.text(" ")
+    tb.tag("#RetroGaming", "RetroGaming"); tb.text(" ")
+    
+    for tag in plat_tags:
+        tb.tag(tag, tag.replace("#", ""))
+        tb.text(" ")
+        
+    tb.tag("#OnThisDay", "OnThisDay")
+    
+    bsky.send_post(tb, embed=models.AppBskyEmbedImages.Main(images=imgs_to_upload[:4]))
+    logger.info(f"✅ On This Day Posted: {game['name']} ({year})")
 
 def run_starter_pack(bsky):
     games = fetch_games_from_rawg(4)
@@ -667,6 +758,7 @@ def main():
 
     logger.info(f"🚀 Executing Slot {slot_id}...")
 
+    # Expanded Slot Mapping for 3 Posts/Day
     if slot_id == 1: run_slot_1_ad(bsky)
     elif slot_id == 2: run_generic_q(bsky)
     elif slot_id == 3: run_rivalry(bsky)
@@ -679,6 +771,11 @@ def main():
     elif slot_id == 10: run_fact(bsky)
     elif slot_id == 11: run_single_game_post(bsky, "Memory")
     elif slot_id == 12: run_fact(bsky)
+    elif slot_id == 13: run_on_this_day(bsky)    # NEW
+    elif slot_id == 14: run_fact(bsky)           # Reuse
+    elif slot_id == 15: run_single_game_post(bsky, "Memory") # Reuse
+    elif slot_id == 17: run_generic_q(bsky)      # Reuse
+    elif slot_id == 18: run_rivalry(bsky)        # Reuse
     else:
         logger.error(f"❌ Unknown or Unscheduled Slot ID: {slot_id}")
 
