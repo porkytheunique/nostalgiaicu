@@ -2,8 +2,8 @@ name: Daily Retro Bot Post
 
 on:
   schedule:
-    # Runs at 10:00 UTC and 15:00 UTC every day
-    - cron: '0 10,15 * * *'
+    # Runs at 09:00, 15:00, and 21:00 UTC every day (3 times/day)
+    - cron: '0 9,15,21 * * *'
   workflow_dispatch: 
     inputs:
       force_slot:
@@ -13,18 +13,17 @@ on:
         type: choice
         options:
           - 'Auto-Detect (Run standard daily schedule)'
-          - 'Slot 1: Mon 10:00 - Feature Ad'
-          - 'Slot 2: Mon 15:00 - Generic Question'
-          - 'Slot 3: Tue 10:00 - Rivalry (Collage)'
-          - 'Slot 4: Wed 10:00 - Unpopular Opinion'
-          - 'Slot 5: Wed 15:00 - Retro Fact'
-          - 'Slot 6: Thu 10:00 - Obscure/Hidden Gem'
-          - 'Slot 7: Fri 10:00 - Starter Pack (Collage)'
-          - 'Slot 8: Fri 15:00 - Generic Question'
-          - 'Slot 9: Sat 10:00 - Aesthetic/Art'
-          - 'Slot 10: Sat 15:00 - Retro Fact'
-          - 'Slot 11: Sun 10:00 - Memory Question'
-          - 'Slot 12: Sun 15:00 - Retro Fact'
+          - 'Slot 1: Feature Ad (Mon 09:00)'
+          - 'Slot 2: Generic Question (Mon 15:00)'
+          - 'Slot 13: On This Day / History (Mon 21:00)'
+          - 'Slot 9: Aesthetic/Art (Tue 09:00)'
+          - 'Slot 3: Rivalry Collage (Tue 15:00)'
+          - 'Slot 14: Retro Fact (Tue 21:00)'
+          - 'Slot 4: Unpopular Opinion (Wed 09:00)'
+          - 'Slot 6: Obscure/Hidden Gem (Thu 09:00)'
+          - 'Slot 7: Starter Pack Collage (Fri 09:00)'
+          - 'Slot 11: Memory Question (Sun 09:00)'
+          - 'Slot 5: Retro Fact (Manual Trigger)'
 
 jobs:
   run-bot:
