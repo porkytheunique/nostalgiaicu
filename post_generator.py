@@ -387,6 +387,11 @@ def run_slot_1_ad(bsky):
         logger.info(f"✅ Slot 1 Posted: {feature['name']}")
 
 def run_generic_q(bsky):
+    """
+    Dual Mode Generic Question:
+    Mode A (50%): Broad "Engagement Bait" topic + Random Console Image (Vibe).
+    Mode B (50%): Specific Console Nostalgia + Matching Console Image + Specific Tag.
+    """
     used_q = load_json('history_questions.json', [])
     valid_images = [img for img in CONSOLE_IMAGES if os.path.exists(img)]
     
@@ -396,19 +401,63 @@ def run_generic_q(bsky):
 
     img_embed = None
     topic_text = ""
+    console_tag = None  # Store the specific tag here
 
     if mode == "console":
         chosen_img = random.choice(valid_images)
-        console_name = chosen_img.replace("images/console_", "").replace(".jpg", "").upper()
-        if "NES" in console_name: console_name = "Nintendo Entertainment System (NES)"
-        elif "SNES" in console_name: console_name = "Super Nintendo (SNES)"
-        elif "N64" in console_name: console_name = "Nintendo 64"
-        elif "GENESIS" in console_name: console_name = "Sega Genesis"
-        elif "SATURN" in console_name: console_name = "Sega Saturn"
-        elif "DREAMCAST" in console_name: console_name = "Sega Dreamcast"
-        elif "TURBOGRAFX" in console_name: console_name = "TurboGrafx-16"
-        elif "NEOGEO" in console_name: console_name = "Neo Geo"
+        # Extract raw name from filename (e.g., "console_segacd" -> "SEGACD")
+        raw_name = chosen_img.replace("images/console_", "").replace(".jpg", "").upper()
         
+        # Determine readable name for AI & Hashtag for Post
+        if "NES" in raw_name: 
+            console_name = "Nintendo Entertainment System (NES)"
+            console_tag = "#NES"
+        elif "SNES" in raw_name: 
+            console_name = "Super Nintendo (SNES)"
+            console_tag = "#SNES"
+        elif "N64" in raw_name: 
+            console_name = "Nintendo 64"
+            console_tag = "#N64"
+        elif "GAMECUBE" in raw_name:
+            console_name = "Nintendo GameCube"
+            console_tag = "#GameCube"
+        elif "GENESIS" in raw_name: 
+            console_name = "Sega Genesis"
+            console_tag = "#SegaGenesis"
+        elif "SATURN" in raw_name: 
+            console_name = "Sega Saturn"
+            console_tag = "#SegaSaturn"
+        elif "DREAMCAST" in raw_name: 
+            console_name = "Sega Dreamcast"
+            console_tag = "#Dreamcast"
+        elif "TURBOGRAFX" in raw_name: 
+            console_name = "TurboGrafx-16"
+            console_tag = "#TurboGrafx16"
+        elif "NEOGEO" in raw_name: 
+            console_name = "Neo Geo"
+            console_tag = "#NeoGeo"
+        elif "SEGACD" in raw_name:
+            console_name = "Sega CD"
+            console_tag = "#SegaCD"
+        elif "32X" in raw_name:
+            console_name = "Sega 32X"
+            console_tag = "#Sega32X"
+        elif "GBC" in raw_name:
+            console_name = "Game Boy Color"
+            console_tag = "#GameBoyColor"
+        elif "PS1" in raw_name:
+            console_name = "PlayStation 1"
+            console_tag = "#PS1"
+        elif "PS2" in raw_name:
+            console_name = "PlayStation 2"
+            console_tag = "#PS2"
+        elif "XBOX" in raw_name:
+            console_name = "Original Xbox"
+            console_tag = "#Xbox"
+        else:
+            console_name = raw_name
+            console_tag = "#RetroGaming"
+
         topic_text = f"the {console_name}"
         prompt = f"Write a short, nostalgic question specifically about the {console_name}. Under 200 chars. DO NOT use hashtags. DO NOT use quotation marks."
         
@@ -438,6 +487,11 @@ def run_generic_q(bsky):
     tb.text(text + "\n\n")
     tb.tag("#Retro", "Retro"); tb.text(" ")
     tb.tag("#RetroGaming", "RetroGaming")
+    
+    # NEW: Add the specific console tag if we are in Console Mode
+    if console_tag:
+        tb.text(" ")
+        tb.tag(console_tag, console_tag.replace("#", ""))
     
     bsky.send_post(tb, embed=img_embed)
     logger.info(f"✅ Generic Q Posted ({mode}): {topic_text}")
