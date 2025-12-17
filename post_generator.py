@@ -54,7 +54,7 @@ MONDAY_FEATURES = [
     {"name": "Retro Radio", "url": "https://www.nostalgia.icu/radio/", "img": "images/ad_radio.jpg", "texts": ["Vibe to the classics. 📻 24/7 Retro Radio playing the best VGM.", "The soundtrack of your childhood is live. 🎧"], "tags": ["#Retro", "#RetroGaming", "#Nostalgia", "#Radio"]},
     {"name": "System Advisor", "url": "https://www.nostalgia.icu/advisor/", "img": "images/ad_advisor.jpg", "texts": ["Stuck in a game? 🤖 Chat with our System Curator.", "Find the value of your old carts. 💡"], "tags": ["#Retro", "#RetroGaming", "#Nostalgia", "#Advisor"]},
     {"name": "Nostalgia Quest", "url": "https://www.nostalgia.icu/quest/", "img": "images/ad_quest.jpg", "texts": ["Enter the dungeon! ⚔️ Join the Nostalgia Quest.", "Earn street cred. 🛡️ Prove your mastery."], "tags": ["#Retro", "#RetroGaming", "#Nostalgia", "#Quest"]},
-    {"name": "Gaming History", "url": "https://www.nostalgia.icu/history/", "img": "images/ad_history.jpg", "texts": ["On this day... 📅 Check which legends were released today.", "Travel back in time. ⏳ See what today in gaming."], "tags": ["#Retro", "#RetroGaming", "#Nostalgia", "#GamingHistory"]},
+    {"name": "Gaming History", "url": "https://www.nostalgia.icu/history/", "img": "images/ad_history.jpg", "texts": ["On this day... 📅 Check which legends were released today.", "Travel back in time. ⏳ See what happened today in gaming."], "tags": ["#Retro", "#RetroGaming", "#Nostalgia", "#GamingHistory"]},
     {"name": "Game Database", "url": "https://www.nostalgia.icu/database/", "img": "images/ad_database.jpg", "texts": ["The ultimate index. 💾 Search our massive Retro Database.", "Need info? 💽 Our Database has the data."], "tags": ["#Retro", "#RetroGaming", "#Nostalgia", "#GameDB"]},
     {"name": "Pixel Challenge", "url": "https://www.nostalgia.icu/quest/", "img": "images/ad_challenge.jpg", "texts": ["Test your eyes! 👀 Can you identify the game from a few pixels?", "Take the Daily Pixel Challenge. 🧩"], "tags": ["#Retro", "#RetroGaming", "#Nostalgia", "#PixelArt"]}
 ]
@@ -104,6 +104,8 @@ def get_claude_text(prompt):
         )
         text = msg.content[0].text.strip()
         text = text.replace("#", "").replace('"', '').replace("'", "")
+        # Safety Truncate to leave room for tags
+        if len(text) > 185: text = text[:182] + "..."
         return text
     except Exception as e:
         logger.error(f"Claude Error: {e}")
@@ -130,9 +132,6 @@ def get_distinct_screenshot(game, exclude_url=None):
     return screens[0]['image']
 
 def get_genre_name(game_data):
-    """
-    Extracts the primary genre name for grounding AI prompts.
-    """
     genres = game_data.get('genres', [])
     if genres:
         return ", ".join([g['name'] for g in genres[:2]])
@@ -170,8 +169,14 @@ def create_collage(images, grid=(2,1)):
     return images[0]
 
 def clean_game_hashtag(game_name):
-    clean = re.sub(r'[^a-zA-Z0-9]', '', game_name)
-    return f"#{clean}" if clean else "#RetroGame"
+    """
+    Creates a clean, short hashtag using the first 2 words.
+    Example: 'Midnight Club 3: DUB Edition' -> '#MidnightClub'
+    """
+    words = game_name.split()
+    short_name = "".join(words[:2])
+    clean = re.sub(r'[^a-zA-Z0-9]', '', short_name)
+    return f"#{clean}" if (clean and len(clean) > 2) else "#RetroGaming"
 
 def get_platform_tags(game_data, limit=1):
     found_tags = []
@@ -258,13 +263,13 @@ def run_generic_q(bsky):
         console_map = {"NES": ("NES", "#NES"), "SNES": ("SNES", "#SNES"), "N64": ("N64", "#N64"), "GAMECUBE": ("GameCube", "#GameCube"), "GENESIS": ("Genesis", "#SegaGenesis"), "SATURN": ("Saturn", "#SegaSaturn"), "DREAMCAST": ("Dreamcast", "#Dreamcast"), "PS1": ("PS1", "#PS1"), "PS2": ("PS2", "#PS2"), "XBOX": ("Xbox", "#Xbox"), "GBC": ("GBC", "#GameBoyColor"), "NEOGEO": ("Neo Geo", "#NeoGeo"), "TURBOGRAFX": ("TurboGrafx", "#TurboGrafx16")}
         c_info = next((v for k, v in console_map.items() if k in raw), ("Retro Console", "#RetroGaming"))
         console_tag = c_info[1]
-        prompt = f"Write a short, nostalgic question about the {c_info[0]}. Under 200 chars. No hashtags."
+        prompt = f"Write a short, nostalgic question about the {c_info[0]}. Under 150 chars. No hashtags."
         with open(chosen_img, 'rb') as f:
             upload = bsky.upload_blob(f.read())
             img_embed = models.AppBskyEmbedImages.Main(images=[models.AppBskyEmbedImages.Image(alt=c_info[0], image=upload.blob)])
     else:
         topic = random.choice([t for t in GENERIC_TOPICS if t not in used_q[-5:]])
-        prompt = f"Write a broad question for retro gamers about '{topic}'. Under 200 chars. No hashtags."
+        prompt = f"Write a broad question for retro gamers about '{topic}'. Under 150 chars. No hashtags."
         if valid_imgs:
             with open(random.choice(valid_imgs), 'rb') as f:
                 upload = bsky.upload_blob(f.read())
@@ -282,7 +287,7 @@ def run_rivalry(bsky):
     g1s, g2s = fetch_games_from_rawg(1, pair['p1']), fetch_games_from_rawg(1, pair['p2'])
     if not g1s or not g2s: return
     g1, g2 = g1s[0], g2s[0]
-    prompt = f"Compare the {get_genre_name(g1)} game {g1['name']} ({pair['t1']}) and the {get_genre_name(g2)} game {g2['name']} ({pair['t2']}). Who won? Under 240 chars. No hashtags."
+    prompt = f"Compare the {get_genre_name(g1)} game {g1['name']} ({pair['t1']}) and the {get_genre_name(g2)} game {g2['name']} ({pair['t2']}). Who won? Under 150 chars. No hashtags."
     text = get_claude_text(prompt) or f"{g1['name']} vs {g2['name']}."
     imgs = []
     i1, i2 = download_image(g1['background_image']), download_image(g2['background_image'])
@@ -306,7 +311,7 @@ def run_single_game_post(bsky, slot_type):
     genre = get_genre_name(game)
     configs = {"Unpopular": {"p": "unpopular opinion about difficulty/design", "t": "#UnpopularOpinion"}, "Obscure": {"p": "why it's a hidden gem", "t": "#HiddenGem"}, "Aesthetic": {"p": "praise pixel art visuals", "t": "#PixelArt"}, "Memory": {"p": "ask for a childhood memory", "t": "#Nostalgia"}}
     cfg = configs[slot_type]
-    prompt = f"Write about '{game['name']}' (Genre: {genre}). Theme: {cfg['p']}. Under 240 chars. No hashtags."
+    prompt = f"Write about '{game['name']}' (Genre: {genre}). Theme: {cfg['p']}. Under 150 chars. No hashtags."
     text = get_claude_text(prompt) or f"Remember {game['name']}?"
     imgs = []
     main_img = download_image(game['background_image'])
@@ -321,14 +326,18 @@ def run_single_game_post(bsky, slot_type):
             screens += 1
     if os.path.exists("images/promo_ad.jpg"):
         with open("images/promo_ad.jpg", "rb") as f: imgs.append(models.AppBskyEmbedImages.Image(alt="Nostalgia", image=bsky.upload_blob(f.read()).blob))
-    tb = client_utils.TextBuilder(); tb.text(text + "\n\n")
+    
+    tb = client_utils.TextBuilder()
+    tb.text(text + "\n\n")
     if slot_type == "Obscure" and random.random() < 0.3:
         tb.text("Uncovered in the Archive. 📂 "); tb.link("nostalgia.icu/database", "https://www.nostalgia.icu/database/"); tb.text("\n\n")
+    
     tb.tag("#Retro", "Retro"); tb.text(" "); tb.tag("#RetroGaming", "RetroGaming"); tb.text(" ")
     g_tag = clean_game_hashtag(game['name'])
     if g_tag != "#RetroGame": tb.tag(g_tag, g_tag.replace("#", "")); tb.text(" ")
     plat = get_platform_tags(game, 1)[0]
     tb.tag(plat, plat.replace("#", "")); tb.text(" "); tb.tag(cfg['t'], cfg['t'].replace("#", ""))
+    
     bsky.send_post(tb, embed=models.AppBskyEmbedImages.Main(images=imgs[:4]))
 
 def run_fact(bsky):
@@ -336,16 +345,19 @@ def run_fact(bsky):
     if not game_list: return
     game = game_list[0]
     genre = get_genre_name(game)
-    prompt = f"Tell a trivia fact about the {genre} game '{game['name']}'. Under 200 chars. No hashtags."
+    prompt = f"Tell a trivia fact about the {genre} game '{game['name']}'. Under 150 chars. No hashtags."
     text = get_claude_text(prompt) or f"Did you know {game['name']} is a classic?"
     imgs = []
     main_img = download_image(game['background_image'])
     if main_img: imgs.append(models.AppBskyEmbedImages.Image(alt=game['name'], image=bsky.upload_blob(image_to_bytes(main_img)).blob))
     if os.path.exists("images/promo_ad.jpg"):
         with open("images/promo_ad.jpg", "rb") as f: imgs.append(models.AppBskyEmbedImages.Image(alt="Nostalgia", image=bsky.upload_blob(f.read()).blob))
+    
     tb = client_utils.TextBuilder(); tb.text(f"{random.choice(FACT_INTROS)} 🧠\n\n{text}\n\n")
     if random.random() < 0.3: tb.text("More history: "); tb.link("nostalgia.icu/history", "https://www.nostalgia.icu/history/"); tb.text("\n\n")
-    tb.tag("#Retro", "Retro"); tb.text(" "); tb.tag("#RetroGaming", "RetroGaming"); tb.text(" "); tb.tag("#FunFact", "FunFact"); tb.text(" "); plat = get_platform_tags(game, 1)[0]; tb.tag(plat, plat.replace("#", ""))
+    tb.tag("#Retro", "Retro"); tb.text(" "); tb.tag("#RetroGaming", "RetroGaming"); tb.text(" "); tb.tag("#FunFact", "FunFact"); tb.text(" ")
+    plat = get_platform_tags(game, 1)[0]; tb.tag(plat, plat.replace("#", ""))
+    
     bsky.send_post(tb, embed=models.AppBskyEmbedImages.Main(images=imgs))
     save_json('history_facts.json', load_json('history_facts.json', []) + [game['id']])
 
@@ -353,16 +365,18 @@ def run_on_this_day(bsky):
     game = fetch_on_this_day_game()
     if not game: run_fact(bsky); return
     genre = get_genre_name(game)
-    prompt = f"Celebrate that the {genre} game '{game['name']}' was released today in {game['release_year']}. Under 200 chars. No hashtags."
+    prompt = f"Celebrate that the {genre} game '{game['name']}' was released today in {game['release_year']}. Under 150 chars. No hashtags."
     text = get_claude_text(prompt) or f"On this day, {game['name']} was released!"
     imgs = []
     main_img = download_image(game['background_image'])
     if main_img: imgs.append(models.AppBskyEmbedImages.Image(alt=game['name'], image=bsky.upload_blob(image_to_bytes(main_img)).blob))
     if os.path.exists("images/promo_ad.jpg"):
         with open("images/promo_ad.jpg", "rb") as f: imgs.append(models.AppBskyEmbedImages.Image(alt="Nostalgia", image=bsky.upload_blob(f.read()).blob))
+    
     tb = client_utils.TextBuilder(); tb.text(f"📅 On This Day ({game['release_year']})\n\n{text}\n\nSee what else launched: ")
     tb.link("nostalgia.icu/history", "https://www.nostalgia.icu/history/"); tb.text("\n\n")
     tb.tag("#Retro", "Retro"); tb.text(" "); tb.tag("#RetroGaming", "RetroGaming"); tb.text(" "); plat = get_platform_tags(game, 1)[0]; tb.tag(plat, plat.replace("#", "")); tb.text(" "); tb.tag("#OnThisDay", "OnThisDay")
+    
     bsky.send_post(tb, embed=models.AppBskyEmbedImages.Main(images=imgs))
 
 def run_elimination(bsky):
@@ -386,9 +400,11 @@ def run_elimination(bsky):
         if s_img: imgs.append(models.AppBskyEmbedImages.Image(alt="Gameplay", image=bsky.upload_blob(image_to_bytes(s_img)).blob))
     if os.path.exists("images/promo_ad.jpg"):
         with open("images/promo_ad.jpg", "rb") as f: imgs.append(models.AppBskyEmbedImages.Image(alt="Nostalgia", image=bsky.upload_blob(f.read()).blob))
+    
     tb = client_utils.TextBuilder(); tb.text(text + "\n\n" + game_list_text + "\n")
     tb.tag("#Retro", "Retro"); tb.text(" "); tb.tag("#RetroGaming", "RetroGaming"); tb.text(" "); tb.tag("#Nostalgia", "Nostalgia"); tb.text(" ")
     for tag in all_plats: tb.tag(tag, tag.replace("#", "")); tb.text(" ")
+    
     bsky.send_post(tb, embed=models.AppBskyEmbedImages.Main(images=imgs[:4]))
 
 # --- MAIN DISPATCHER ---
