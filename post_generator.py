@@ -23,7 +23,7 @@ logger = logging.getLogger()
 RAWG_API_KEY = os.environ.get("RAWG_API_KEY")
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY")
 BSKY_HANDLE = os.environ.get("BLUESKY_HANDLE")
-BSKY_PASSWORD = os.environ.get("BLUESKY_PASSWORD")
+BSKY_PASSWORD = os.environ.get("BSKY_PASSWORD")
 
 # --- CONSTANTS & SCHEDULE ---
 SCHEDULE = {
@@ -104,8 +104,6 @@ def get_claude_text(prompt):
         )
         text = msg.content[0].text.strip()
         text = text.replace("#", "").replace('"', '').replace("'", "")
-        # Safety Truncate to leave room for tags
-        if len(text) > 185: text = text[:182] + "..."
         return text
     except Exception as e:
         logger.error(f"Claude Error: {e}")
@@ -169,28 +167,36 @@ def create_collage(images, grid=(2,1)):
     return images[0]
 
 def clean_game_hashtag(game_name):
-    """
-    Creates a clean, short hashtag using the first 2 words.
-    Example: 'Midnight Club 3: DUB Edition' -> '#MidnightClub'
-    """
     words = game_name.split()
     short_name = "".join(words[:2])
     clean = re.sub(r'[^a-zA-Z0-9]', '', short_name)
     return f"#{clean}" if (clean and len(clean) > 2) else "#RetroGaming"
 
 def get_platform_tags(game_data, limit=1):
+    """
+    PRIORITY TAGS: Retro consoles first. Only adds #PCGaming if no consoles exist.
+    """
     found_tags = []
+    has_console = False
+    
+    # 1. First Pass: Check for Retro Consoles
     for p in game_data.get('platforms', []):
         name = p['platform']['name']
-        if name in PLATFORM_TAGS: found_tags.append(PLATFORM_TAGS[name])
-        else:
+        if "PC" not in name: # If it's anything but PC
             for key, val in PLATFORM_TAGS.items():
-                if key in name:
+                if "PC" not in key and key in name:
                     found_tags.append(val)
+                    has_console = True
                     break
+    
+    # 2. Second Pass: Only add PC if we didn't find a console
+    if not has_console:
+        for p in game_data.get('platforms', []):
+            if "PC" in p['platform']['name']:
+                found_tags.append("#PCGaming")
+                break
+
     found_tags = list(set(found_tags))
-    if "#PCGaming" in found_tags and len(found_tags) > 1:
-        found_tags.remove("#PCGaming"); found_tags.append("#PCGaming")
     return found_tags[:limit] if found_tags else ["#RetroGaming"]
 
 def fetch_games_from_rawg(count=1, platform_ids=None, genre_id=None):
@@ -263,13 +269,13 @@ def run_generic_q(bsky):
         console_map = {"NES": ("NES", "#NES"), "SNES": ("SNES", "#SNES"), "N64": ("N64", "#N64"), "GAMECUBE": ("GameCube", "#GameCube"), "GENESIS": ("Genesis", "#SegaGenesis"), "SATURN": ("Saturn", "#SegaSaturn"), "DREAMCAST": ("Dreamcast", "#Dreamcast"), "PS1": ("PS1", "#PS1"), "PS2": ("PS2", "#PS2"), "XBOX": ("Xbox", "#Xbox"), "GBC": ("GBC", "#GameBoyColor"), "NEOGEO": ("Neo Geo", "#NeoGeo"), "TURBOGRAFX": ("TurboGrafx", "#TurboGrafx16")}
         c_info = next((v for k, v in console_map.items() if k in raw), ("Retro Console", "#RetroGaming"))
         console_tag = c_info[1]
-        prompt = f"Write a short, nostalgic question about the {c_info[0]}. Under 150 chars. No hashtags."
+        prompt = f"Write a short, nostalgic question about the {c_info[0]}. Under 110 characters. NO hashtags."
         with open(chosen_img, 'rb') as f:
             upload = bsky.upload_blob(f.read())
             img_embed = models.AppBskyEmbedImages.Main(images=[models.AppBskyEmbedImages.Image(alt=c_info[0], image=upload.blob)])
     else:
         topic = random.choice([t for t in GENERIC_TOPICS if t not in used_q[-5:]])
-        prompt = f"Write a broad question for retro gamers about '{topic}'. Under 150 chars. No hashtags."
+        prompt = f"Write a broad question for retro gamers about '{topic}'. Under 110 characters. NO hashtags."
         if valid_imgs:
             with open(random.choice(valid_imgs), 'rb') as f:
                 upload = bsky.upload_blob(f.read())
@@ -287,7 +293,7 @@ def run_rivalry(bsky):
     g1s, g2s = fetch_games_from_rawg(1, pair['p1']), fetch_games_from_rawg(1, pair['p2'])
     if not g1s or not g2s: return
     g1, g2 = g1s[0], g2s[0]
-    prompt = f"Compare the {get_genre_name(g1)} game {g1['name']} ({pair['t1']}) and the {get_genre_name(g2)} game {g2['name']} ({pair['t2']}). Who won? Under 150 chars. No hashtags."
+    prompt = f"Compare the {get_genre_name(g1)} game {g1['name']} and the {get_genre_name(g2)} game {g2['name']}. Under 110 characters. NO hashtags."
     text = get_claude_text(prompt) or f"{g1['name']} vs {g2['name']}."
     imgs = []
     i1, i2 = download_image(g1['background_image']), download_image(g2['background_image'])
@@ -311,7 +317,7 @@ def run_single_game_post(bsky, slot_type):
     genre = get_genre_name(game)
     configs = {"Unpopular": {"p": "unpopular opinion about difficulty/design", "t": "#UnpopularOpinion"}, "Obscure": {"p": "why it's a hidden gem", "t": "#HiddenGem"}, "Aesthetic": {"p": "praise pixel art visuals", "t": "#PixelArt"}, "Memory": {"p": "ask for a childhood memory", "t": "#Nostalgia"}}
     cfg = configs[slot_type]
-    prompt = f"Write about '{game['name']}' (Genre: {genre}). Theme: {cfg['p']}. Under 150 chars. No hashtags."
+    prompt = f"Write about '{game['name']}' (Genre: {genre}). Theme: {cfg['p']}. Keep it EXTREMELY BRIEF (Under 110 chars). NO hashtags."
     text = get_claude_text(prompt) or f"Remember {game['name']}?"
     imgs = []
     main_img = download_image(game['background_image'])
@@ -345,7 +351,7 @@ def run_fact(bsky):
     if not game_list: return
     game = game_list[0]
     genre = get_genre_name(game)
-    prompt = f"Tell a trivia fact about the {genre} game '{game['name']}'. Under 150 chars. No hashtags."
+    prompt = f"Tell a trivia fact about the {genre} game '{game['name']}'. Keep it EXTREMELY BRIEF (Under 110 characters). NO hashtags."
     text = get_claude_text(prompt) or f"Did you know {game['name']} is a classic?"
     imgs = []
     main_img = download_image(game['background_image'])
@@ -365,7 +371,7 @@ def run_on_this_day(bsky):
     game = fetch_on_this_day_game()
     if not game: run_fact(bsky); return
     genre = get_genre_name(game)
-    prompt = f"Celebrate that the {genre} game '{game['name']}' was released today in {game['release_year']}. Under 150 chars. No hashtags."
+    prompt = f"Celebrate that the {genre} game '{game['name']}' was released today in {game['release_year']}. Keep it EXTREMELY BRIEF (Under 110 characters). NO hashtags."
     text = get_claude_text(prompt) or f"On this day, {game['name']} was released!"
     imgs = []
     main_img = download_image(game['background_image'])
@@ -388,7 +394,7 @@ def run_elimination(bsky):
         game_list_text += f"{idx+1}. {g['name']}\n"
         all_plats.extend(get_platform_tags(g, 2))
     all_plats = list(set(all_plats))
-    prompt = f"Ask: 'Delete one of these {genre_name} classics forever. Which one goes?' Under 100 chars. No hashtags."
+    prompt = f"Ask: 'Delete one of these {genre_name} classics forever. Which one goes?' Under 100 chars. NO hashtags."
     text = get_claude_text(prompt) or "One has to go. Choose."
     imgs, pil_imgs = [], [download_image(g['background_image']) for g in games]
     pil_imgs = [p for p in pil_imgs if p]
