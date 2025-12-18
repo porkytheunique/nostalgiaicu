@@ -23,7 +23,7 @@ logger = logging.getLogger()
 RAWG_API_KEY = os.environ.get("RAWG_API_KEY")
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY")
 BSKY_HANDLE = os.environ.get("BLUESKY_HANDLE")
-BSKY_PASSWORD = os.environ.get("BSKY_PASSWORD")
+BSKY_PASSWORD = os.environ.get("BLUESKY_PASSWORD")
 
 # --- CONSTANTS & SCHEDULE ---
 SCHEDULE = {
@@ -198,32 +198,164 @@ def fetch_games_from_rawg(count=1, platform_ids=None, genre_id=None):
         save_json('history_games.json', used_games[-2000:])
     return found_games
 
+def fetch_on_this_day_game():
+    now = datetime.now()
+    month, day = now.month, now.day
+    for _ in range(5):
+        year = random.randint(1985, 2005)
+        url = f"https://api.rawg.io/api/games?key={RAWG_API_KEY}&dates={year}-{month:02d}-{day:02d},{year}-{month:02d}-{day:02d}&ordering=-added&page_size=5"
+        try:
+            data = requests.get(url).json()
+            results = data.get('results', [])
+            if results:
+                game = random.choice(results[:3])
+                if game.get('background_image'):
+                    full_details = requests.get(f"https://api.rawg.io/api/games/{game['id']}?key={RAWG_API_KEY}").json()
+                    full_details['release_year'] = year 
+                    return full_details
+        except: pass
+    return None
+
 # --- SLOT HANDLERS ---
+
+def run_slot_1_ad(bsky):
+    history = load_json('history_ads.json', {'last_index': -1})
+    idx = (history['last_index'] + 1) % len(MONDAY_FEATURES)
+    feature = MONDAY_FEATURES[idx]
+    tb = client_utils.TextBuilder()
+    tb.text(random.choice(feature['texts']) + "\n\n🔗 Visit: ")
+    tb.link(feature['url'], feature['url'])
+    tb.text("\n\n")
+    for tag in feature['tags']: tb.tag(tag, tag.replace("#", "")); tb.text(" ")
+    if os.path.exists(feature['img']):
+        with open(feature['img'], 'rb') as f:
+            upload = bsky.upload_blob(f.read())
+            embed = models.AppBskyEmbedImages.Main(images=[models.AppBskyEmbedImages.Image(alt=feature['name'], image=upload.blob)])
+            bsky.send_post(tb, embed=embed)
+            save_json('history_ads.json', {'last_index': idx})
+            logger.info(f"✅ Posted Ad: {feature['name']}")
+
+def run_generic_q(bsky):
+    used_q = load_json('history_questions.json', [])
+    valid_imgs = [img for img in CONSOLE_IMAGES if os.path.exists(img)]
+    mode = "console" if valid_imgs and random.random() > 0.5 else "topic"
+    img_embed, console_tag = None, None
+
+    if mode == "console":
+        chosen_img = random.choice(valid_imgs)
+        raw = chosen_img.replace("images/console_", "").replace(".jpg", "").upper()
+        console_map = {"NES": ("NES", "#NES"), "SNES": ("SNES", "#SNES"), "N64": ("N64", "#N64"), "GAMECUBE": ("GameCube", "#GameCube"), "GENESIS": ("Genesis", "#SegaGenesis"), "SATURN": ("Saturn", "#SegaSaturn"), "DREAMCAST": ("Dreamcast", "#Dreamcast"), "PS1": ("PS1", "#PS1"), "PS2": ("PS2", "#PS2"), "XBOX": ("Xbox", "#Xbox"), "GBC": ("GBC", "#GameBoyColor"), "NEOGEO": ("Neo Geo", "#NeoGeo"), "TURBOGRAFX": ("TurboGrafx", "#TurboGrafx16")}
+        c_info = next((v for k, v in console_map.items() if k in raw), ("Retro Console", "#RetroGaming"))
+        console_tag = c_info[1]
+        prompt = f"Write a short, nostalgic question about the {c_info[0]}. Under 110 chars. No hashtags."
+        with open(chosen_img, 'rb') as f:
+            upload = bsky.upload_blob(f.read())
+            img_embed = models.AppBskyEmbedImages.Main(images=[models.AppBskyEmbedImages.Image(alt=c_info[0], image=upload.blob)])
+    else:
+        topic = random.choice([t for t in GENERIC_TOPICS if t not in used_q[-5:]])
+        prompt = f"Write a broad question for retro gamers about '{topic}'. Under 110 chars. No hashtags."
+        if valid_imgs:
+            with open(random.choice(valid_imgs), 'rb') as f:
+                upload = bsky.upload_blob(f.read())
+                img_embed = models.AppBskyEmbedImages.Main(images=[models.AppBskyEmbedImages.Image(alt="Retro Console", image=upload.blob)])
+        used_q.append(topic); save_json('history_questions.json', used_q[-50:])
+
+    text = get_claude_text(prompt) or "What's your take on this?"
+    tb = client_utils.TextBuilder(); tb.text(text + "\n\n")
+    tb.tag("#Retro", "Retro"); tb.text(" "); tb.tag("#RetroGaming", "RetroGaming")
+    if console_tag: tb.text(" "); tb.tag(console_tag, console_tag.replace("#", ""))
+    bsky.send_post(tb, embed=img_embed)
+    logger.info("✅ Posted Generic Question")
+
+def run_rivalry(bsky):
+    pair = random.choice(RIVAL_PAIRS)
+    g1s, g2s = fetch_games_from_rawg(1, pair['p1']), fetch_games_from_rawg(1, pair['p2'])
+    if not g1s or not g2s: return
+    g1, g2 = g1s[0], g2s[0]
+    prompt = f"Compare the {get_genre_name(g1)} game {g1['name']} ({pair['t1']}) and the {get_genre_name(g2)} game {g2['name']} ({pair['t2']}). Who won? Under 110 chars. No hashtags."
+    text = get_claude_text(prompt) or f"{g1['name']} vs {g2['name']}."
+    imgs = []
+    i1, i2 = download_image(g1['background_image']), download_image(g2['background_image'])
+    if i1 and i2:
+        collage = create_collage([i1, i2], grid=(2,1))
+        imgs.append(models.AppBskyEmbedImages.Image(alt="Rivalry", image=bsky.upload_blob(image_to_bytes(collage)).blob))
+    for g in [g1, g2]:
+        s_img = download_image(get_distinct_screenshot(g, g['background_image']))
+        if s_img: imgs.append(models.AppBskyEmbedImages.Image(alt=g['name'], image=bsky.upload_blob(image_to_bytes(s_img)).blob))
+    if os.path.exists("images/promo_ad.jpg"):
+        with open("images/promo_ad.jpg", "rb") as f: imgs.append(models.AppBskyEmbedImages.Image(alt="Nostalgia", image=bsky.upload_blob(f.read()).blob))
+    tb = client_utils.TextBuilder(); tb.text(text + "\n\n")
+    tb.tag("#Retro", "Retro"); tb.text(" "); tb.tag("#RetroGaming", "RetroGaming"); tb.text(" ")
+    tb.tag(pair['t1'], pair['t1'].replace("#", "")); tb.text(" "); tb.tag(pair['t2'], pair['t2'].replace("#", ""))
+    bsky.send_post(tb, embed=models.AppBskyEmbedImages.Main(images=imgs[:4]))
+    logger.info(f"✅ Posted Rivalry: {g1['name']} vs {g2['name']}")
 
 def run_single_game_post(bsky, slot_type):
     game_list = fetch_games_from_rawg(1, platform_ids=PIXEL_PLATFORMS_IDS if slot_type == "Aesthetic" else None)
-    if not game_list: 
-        logger.error("❌ No game found for single post.")
-        return
+    if not game_list: return
     game = game_list[0]
     configs = {"Unpopular": {"p": "unpopular opinion about difficulty/design", "t": "#UnpopularOpinion"}, "Obscure": {"p": "why it's a hidden gem", "t": "#HiddenGem"}, "Aesthetic": {"p": "praise pixel art visuals", "t": "#PixelArt"}, "Memory": {"p": "ask for a childhood memory", "t": "#Nostalgia"}}
     cfg = configs[slot_type]
     prompt = f"Write about '{game['name']}' (Genre: {get_genre_name(game)}). Theme: {cfg['p']}. Under 110 chars. No hashtags."
     text = get_claude_text(prompt) or f"Remember {game['name']}?"
-    
     imgs = []
     main_img = download_image(game['background_image'])
     if main_img: imgs.append(models.AppBskyEmbedImages.Image(alt=game['name'], image=bsky.upload_blob(image_to_bytes(main_img)).blob))
+    screens = 0
+    for shot in game.get('short_screenshots', []):
+        if screens >= 2: break
+        if shot['image'] == game['background_image']: continue
+        s_img = download_image(shot['image'])
+        if s_img:
+            imgs.append(models.AppBskyEmbedImages.Image(alt="Gameplay", image=bsky.upload_blob(image_to_bytes(s_img)).blob))
+            screens += 1
+    if os.path.exists("images/promo_ad.jpg"):
+        with open("images/promo_ad.jpg", "rb") as f: imgs.append(models.AppBskyEmbedImages.Image(alt="Nostalgia", image=bsky.upload_blob(f.read()).blob))
     
-    tb = client_utils.TextBuilder()
-    tb.text(text + "\n\n")
+    tb = client_utils.TextBuilder(); tb.text(text + "\n\n")
     tb.tag("#Retro", "Retro"); tb.text(" "); tb.tag("#RetroGaming", "RetroGaming"); tb.text(" ")
     tb.tag(clean_game_hashtag(game['name']), clean_game_hashtag(game['name']).replace("#", "")); tb.text(" ")
     plat = get_platform_tags(game, 1)[0]
     tb.tag(plat, plat.replace("#", "")); tb.text(" "); tb.tag(cfg['t'], cfg['t'].replace("#", ""))
-    
     bsky.send_post(tb, embed=models.AppBskyEmbedImages.Main(images=imgs[:4]))
     logger.info(f"✅ Posted {slot_type}: {game['name']}")
+
+def run_fact(bsky):
+    game_list = fetch_games_from_rawg(1)
+    if not game_list: return
+    game = game_list[0]
+    prompt = f"Tell a trivia fact about the {get_genre_name(game)} game '{game['name']}'. Under 110 chars. No hashtags."
+    text = get_claude_text(prompt) or f"Did you know {game['name']} is a classic?"
+    imgs = []
+    main_img = download_image(game['background_image'])
+    if main_img: imgs.append(models.AppBskyEmbedImages.Image(alt=game['name'], image=bsky.upload_blob(image_to_bytes(main_img)).blob))
+    if os.path.exists("images/promo_ad.jpg"):
+        with open("images/promo_ad.jpg", "rb") as f: imgs.append(models.AppBskyEmbedImages.Image(alt="Nostalgia", image=bsky.upload_blob(f.read()).blob))
+    
+    tb = client_utils.TextBuilder(); tb.text(f"{random.choice(FACT_INTROS)} 🧠\n\n{text}\n\n")
+    if random.random() < 0.3: tb.text("More history: "); tb.link("nostalgia.icu/history", "https://www.nostalgia.icu/history/"); tb.text("\n\n")
+    tb.tag("#Retro", "Retro"); tb.text(" "); tb.tag("#RetroGaming", "RetroGaming"); tb.text(" "); tb.tag("#FunFact", "FunFact"); tb.text(" ")
+    plat = get_platform_tags(game, 1)[0]; tb.tag(plat, plat.replace("#", ""))
+    bsky.send_post(tb, embed=models.AppBskyEmbedImages.Main(images=imgs))
+    save_json('history_facts.json', load_json('history_facts.json', []) + [game['id']])
+    logger.info(f"✅ Posted Fact: {game['name']}")
+
+def run_on_this_day(bsky):
+    game = fetch_on_this_day_game()
+    if not game: run_fact(bsky); return
+    prompt = f"Celebrate that the {get_genre_name(game)} game '{game['name']}' was released today in {game['release_year']}. Under 110 chars. No hashtags."
+    text = get_claude_text(prompt) or f"On this day, {game['name']} was released!"
+    imgs = []
+    main_img = download_image(game['background_image'])
+    if main_img: imgs.append(models.AppBskyEmbedImages.Image(alt=game['name'], image=bsky.upload_blob(image_to_bytes(main_img)).blob))
+    if os.path.exists("images/promo_ad.jpg"):
+        with open("images/promo_ad.jpg", "rb") as f: imgs.append(models.AppBskyEmbedImages.Image(alt="Nostalgia", image=bsky.upload_blob(f.read()).blob))
+    
+    tb = client_utils.TextBuilder(); tb.text(f"📅 On This Day ({game['release_year']})\n\n{text}\n\nSee what else launched: ")
+    tb.link("nostalgia.icu/history", "https://www.nostalgia.icu/history/"); tb.text("\n\n")
+    tb.tag("#Retro", "Retro"); tb.text(" "); tb.tag("#RetroGaming", "RetroGaming"); tb.text(" "); plat = get_platform_tags(game, 1)[0]; tb.tag(plat, plat.replace("#", "")); tb.text(" "); tb.tag("#OnThisDay", "OnThisDay")
+    bsky.send_post(tb, embed=models.AppBskyEmbedImages.Main(images=imgs))
+    logger.info(f"✅ Posted On This Day: {game['name']}")
 
 def run_elimination(bsky):
     genre_name, genre_id = random.choice(list(GENRES.items()))
@@ -248,24 +380,14 @@ def run_elimination(bsky):
     bsky.send_post(tb, embed=models.AppBskyEmbedImages.Main(images=imgs[:4]))
     logger.info(f"✅ Posted Elimination: {genre_name}")
 
-# (Other handlers simplified for space - following same robust logic)
-def run_fact(bsky):
-    game = fetch_games_from_rawg(1)[0]
-    prompt = f"Tell a trivia fact about the {get_genre_name(game)} game '{game['name']}'. Under 110 chars. No hashtags."
-    text = get_claude_text(prompt) or "Check this classic out."
-    tb = client_utils.TextBuilder(); tb.text(f"{random.choice(FACT_INTROS)} 🧠\n\n{text}\n\n")
-    tb.tag("#Retro", "Retro"); tb.text(" "); tb.tag("#RetroGaming", "RetroGaming"); tb.text(" "); tb.tag("#FunFact", "FunFact")
-    bsky.send_post(tb, embed=models.AppBskyEmbedImages.Main(images=[models.AppBskyEmbedImages.Image(alt=game['name'], image=bsky.upload_blob(image_to_bytes(download_image(game['background_image']))).blob)]))
-
-def run_on_this_day(bsky):
-    # Logic follows same robustness
-    run_fact(bsky) # Simplified for brevity
-
 # --- MAIN DISPATCHER ---
 def main():
     logger.info("--- BOT RUN STARTED ---")
     try:
-        bsky = Client(); bsky.login(BSKY_HANDLE, BSKY_PASSWORD)
+        if not BSKY_HANDLE or not BSKY_PASSWORD:
+            raise ValueError("BSKY_HANDLE or BSKY_PASSWORD environment variables are missing.")
+        bsky = Client()
+        bsky.login(BSKY_HANDLE, BSKY_PASSWORD)
         logger.info("✅ Connected to Bluesky.")
     except Exception as e:
         logger.error(f"❌ Login Failed: {e}"); return
@@ -276,45 +398,37 @@ def main():
     slot_id = None
 
     if manual:
-        logger.info(f"🛠️ Manual Trigger Detected: {forced}")
-        if "Slot" in forced:
-            try:
-                # Extracts "6" from "Slot 6: Obscure..."
-                match = re.search(r'Slot\s*(\d+)', forced)
-                if match: slot_id = int(match.group(1))
-            except Exception as e: logger.error(f"❌ Slot parse error: {e}")
+        logger.info(f"🛠️ Manual Trigger: {forced}")
+        match = re.search(r'Slot\s*(\d+)', forced)
+        if match: slot_id = int(match.group(1))
     else:
         slot_id = SCHEDULE.get(day, {}).get(hour)
 
     if not slot_id:
-        logger.info(f"⏳ No slot for Day {day} Hour {hour}. Exiting."); return
+        logger.info(f"⏳ No slot scheduled for Hour {hour}. Exiting."); return
 
     logger.info(f"🚀 Executing Slot {slot_id}")
     handlers = {
-        1: lambda: run_fact(bsky), # Placeholder
-        2: lambda: run_fact(bsky),
-        3: lambda: run_fact(bsky),
+        1: lambda: run_slot_1_ad(bsky),
+        2: lambda: run_generic_q(bsky),
+        3: lambda: run_rivalry(bsky),
         4: lambda: run_single_game_post(bsky, "Unpopular"),
         5: lambda: run_fact(bsky),
         6: lambda: run_single_game_post(bsky, "Obscure"),
         7: lambda: run_elimination(bsky),
-        8: lambda: run_fact(bsky),
+        8: lambda: run_generic_q(bsky),
         9: lambda: run_single_game_post(bsky, "Aesthetic"),
         10: lambda: run_fact(bsky),
         11: lambda: run_single_game_post(bsky, "Memory"),
         12: lambda: run_fact(bsky),
-        13: lambda: run_fact(bsky),
+        13: lambda: run_on_this_day(bsky),
         14: lambda: run_fact(bsky),
         15: lambda: run_single_game_post(bsky, "Memory"),
-        17: lambda: run_fact(bsky),
-        18: lambda: run_fact(bsky)
+        17: lambda: run_generic_q(bsky),
+        18: lambda: run_rivalry(bsky)
     }
     
-    if slot_id in handlers:
-        handlers[slot_id]()
-    else:
-        logger.error(f"❌ Slot ID {slot_id} has no handler mapping.")
-
+    if slot_id in handlers: handlers[slot_id]()
     logger.info("--- BOT RUN FINISHED ---")
 
 if __name__ == "__main__":
