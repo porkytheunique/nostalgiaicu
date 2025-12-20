@@ -27,21 +27,13 @@ BSKY_PASSWORD = os.environ.get("BSKY_PASSWORD")
 
 # --- AUTHORITY FRANCHISE MAP (Option B) ---
 FRANCHISE_MAP = {
-    "ZELDA": "#LegendOfZelda",
-    "MARIO": "#SuperMario",
-    "METROID": "#Metroid",
-    "SONIC": "#SonicTheHedgehog",
-    "FINAL FANTASY": "#FinalFantasy",
-    "RESIDENT EVIL": "#ResidentEvil",
-    "METAL GEAR": "#MetalGear",
-    "CASTLEVANIA": "#Castlevania",
-    "MEGA MAN": "#MegaMan",
-    "STREET FIGHTER": "#StreetFighter",
-    "DONKEY KONG": "#DonkeyKong",
-    "PHANTASY STAR": "#PhantasyStar",
-    "MIDNIGHT CLUB": "#MidnightClub",
-    "TEKKEN": "#Tekken",
-    "MORTAL KOMBAT": "#MortalKombat"
+    "ZELDA": "#LegendOfZelda", "MARIO": "#SuperMario", "METROID": "#Metroid",
+    "SONIC": "#SonicTheHedgehog", "FINAL FANTASY": "#FinalFantasy",
+    "RESIDENT EVIL": "#ResidentEvil", "METAL GEAR": "#MetalGear",
+    "CASTLEVANIA": "#Castlevania", "MEGA MAN": "#MegaMan",
+    "STREET FIGHTER": "#StreetFighter", "DONKEY KONG": "#DonkeyKong",
+    "PHANTASY STAR": "#PhantasyStar", "MIDNIGHT CLUB": "#MidnightClub",
+    "TEKKEN": "#Tekken", "MORTAL KOMBAT": "#MortalKombat", "PAC-MAN": "#PacMan"
 }
 
 # --- RETRO CONSTANTS ---
@@ -53,145 +45,143 @@ RETRO_PLATFORMS = {
 RETRO_IDS_STR = ",".join(map(str, RETRO_PLATFORMS.keys()))
 GENRES = {"Platformer": 83, "Shooter": 2, "RPG": 5, "Fighting": 6, "Racing": 1}
 
+# 09:00, 15:00, 21:00 UTC
+SCHEDULE = {
+    0: {9: 1, 15: 2, 21: 13}, 1: {9: 9, 15: 3, 21: 14}, 2: {9: 4, 15: 17, 21: 13},
+    3: {9: 6, 15: 18, 21: 14}, 4: {9: 7, 15: 8, 21: 13}, 5: {9: 9, 15: 10, 21: 15},
+    6: {9: 11, 15: 12, 21: 13}
+}
+
 # --- AUTHORITY HELPERS ---
 
 def get_authority_tags(game_name, platforms_data):
-    """
-    1. Checks the Authority Map for franchise tags.
-    2. Identifies the original console (prioritizing retro consoles over PC).
-    """
     tags = ["#Retro", "#RetroGaming"]
-    
-    # Franchise Tag
     upper_name = game_name.upper()
-    found_franchise = False
+    found_f = False
     for key, tag in FRANCHISE_MAP.items():
         if key in upper_name:
-            tags.append(tag)
-            found_franchise = True
-            break
-    if not found_franchise:
+            tags.append(tag); found_f = True; break
+    if not found_f:
         words = game_name.split(':')[0].split('-')[0].split()
-        clean = re.sub(r'[^a-zA-Z0-9]', '', "".join(words[:2]))
-        tags.append(f"#{clean}")
+        tags.append(f"#{re.sub(r'[^a-zA-Z0-9]', '', ''.join(words[:2]))}")
 
-    # Console Priority Tag
-    console_tag = None
-    pc_tag = None
+    console_tag, pc_tag = None, None
     for p in platforms_data:
-        p_id = p['platform']['id']
-        p_name = p['platform']['name']
+        p_id, p_name = p['platform']['id'], p['platform']['name']
         if p_id in RETRO_PLATFORMS:
             console_tag = f"#{RETRO_PLATFORMS[p_id].replace(' ', '')}"
-            break # Found a priority console
-        elif "PC" in p_name:
-            pc_tag = "#PCGaming"
+            break 
+        elif "PC" in p_name: pc_tag = "#PCGaming"
             
     tags.append(console_tag if console_tag else pc_tag if pc_tag else "#RetroGaming")
     return list(set(tags))
 
-def get_anniversary_string(released_at):
-    """Calculates if this is a milestone year."""
+def get_milestone_info(game_data):
     try:
-        release_year = datetime.strptime(released_at, "%Y-%m-%d").year
-        age = 2025 - release_year
-        if age > 0:
-            return f"It is the {age}th Anniversary of this launch!"
-    except: pass
-    return ""
+        r_year = datetime.strptime(game_data.get('released', '1900-01-01'), "%Y-%m-%d").year
+        age = 2025 - r_year
+        return f"This is the {age}th anniversary year." if age > 0 else ""
+    except: return ""
 
 def deep_fetch_game(game_id):
-    """Fetches full metadata to ensure 100% accuracy on dates and platforms."""
     url = f"https://api.rawg.io/api/games/{game_id}?key={RAWG_API_KEY}"
-    logger.info(f"💎 [DEEP FETCH] Querying game details: {url}")
+    logger.info(f"💎 [DEEP FETCH] Querying game_id {game_id}")
     return requests.get(url).json()
 
-# --- MAIN POSTING LOGIC ---
+# --- POSTING ENGINE ---
 
-def generate_and_post(bsky, game_data, theme_prompt, custom_header=""):
-    # Double-Fetch for accuracy
-    full_game = deep_fetch_game(game_data['id'])
+def post_with_retry(bsky, game_id, theme, custom_header=""):
+    full_game = deep_fetch_game(game_id)
+    name, genre = full_game['name'], ", ".join([g['name'] for g in full_game['genres'][:2]])
+    r_date, m_info = full_game.get('released', 'N/A'), get_milestone_info(full_game)
+    tags = " ".join(get_authority_tags(name, full_game['platforms']))
     
-    name = full_game['name']
-    genre = ", ".join([g['name'] for g in full_game['genres'][:2]])
-    release_date = full_game.get('released', 'Unknown')
-    anniversary = get_anniversary_string(release_date)
-    tags = get_authority_tags(name, full_game['platforms'])
-    
-    # Diagnostic Log
-    logger.info(f"📊 [DATA PACK] Game: {name} | Year: {release_date} | Genre: {genre}")
-
-    base_prompt = (f"Write a {theme_prompt} post about '{name}'. "
-                   f"Context: {genre} game released in {release_date}. {anniversary} "
-                   f"Keep it EXTREMELY BRIEF and ENGAGING (Under 100 chars). NO hashtags.")
+    logger.info(f"📊 [DATA PACK] {name} | Year: {r_date} | Genre: {genre}")
 
     for attempt in range(1, 4):
-        text = ""
         if attempt == 1:
-            text = get_claude_response(base_prompt)
+            p = f"Write a {theme} post about '{name}' ({genre}) released {r_date}. {m_info} Under 100 chars. No hashtags."
         elif attempt == 2:
-            text = get_claude_response(f"RETRY: Write only ONE punchy sentence about {name} and its {genre}. Max 70 chars.")
-        else:
-            text = f"Remember this {genre} classic? {name} from {release_date}."
-
-        final_text = f"{custom_header}{text}\n\n{' '.join(tags)}"
+            p = f"RETRY: Summarize {name} in one punchy sentence under 70 chars."
         
-        # Length Validation
-        if len(final_text) < 295:
-            img = download_image(full_game['background_image'])
-            if post_to_bluesky(bsky, final_text, [img] if img else []):
-                return True
-        logger.warning(f"⚠️ Attempt {attempt} too long ({len(final_text)} chars).")
+        if attempt == 3:
+            text = f"Remember the {genre} classic {name}? Released {r_date[:4]}."
+        else:
+            msg = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY).messages.create(
+                model="claude-3-haiku-20240307", max_tokens=150,
+                messages=[{"role": "user", "content": p}]
+            )
+            text = msg.content[0].text.strip().replace('"', '')
 
+        final_post = f"{custom_header}{text}\n\n{tags}"
+        
+        if len(final_post) < 298:
+            img = download_image(full_game['background_image'])
+            if post_to_bsky(bsky, final_text=final_post, imgs=[img] if img else []):
+                return True
     return False
 
-# --- SLOT HANDLERS ---
+# --- SLOTS ---
 
 def run_on_this_day(bsky):
-    now = datetime.now()
-    month, day = now.month, now.day
-    logger.info(f"📅 [ON THIS DAY] Searching for games released on {month}/{day}...")
-    
-    # Search for games released on this day in any retro year
-    for _ in range(5):
-        year = random.randint(1985, 2005)
-        date_str = f"{year}-{month:02d}-{day:02d}"
-        url = f"https://api.rawg.io/api/games?key={RAWG_API_KEY}&dates={date_str},{date_str}&platforms={RETRO_IDS_STR}"
-        resp = requests.get(url).json()
+    m, d = datetime.now().month, datetime.now().day
+    logger.info(f"📅 [ON THIS DAY] Checking {m}/{d}...")
+    for _ in range(10): 
+        y = random.randint(1985, 2005)
+        ds = f"{y}-{m:02d}-{d:02d}"
+        resp = requests.get(f"https://api.rawg.io/api/games?key={RAWG_API_KEY}&dates={ds},{ds}&platforms={RETRO_IDS_STR}").json()
         if resp.get('results'):
-            game = random.choice(resp['results'])
-            header = f"📅 On This Day in {year}\n\n"
-            if generate_and_post(bsky, game, "celebratory", custom_header=header):
+            if post_with_retry(bsky, resp['results'][0]['id'], "celebratory", f"📅 On This Day in {y}\n\n"):
                 return
-    logger.error("❌ No games found for 'On This Day'. Falling back to Random Fact.")
     run_fact(bsky)
 
-# (Other slots: run_rivalry, run_single_game, run_fact follow this same 'generate_and_post' structure)
+def run_rivalry(bsky):
+    g_name, g_id = random.choice(list(GENRES.items()))
+    logger.info(f"⚔️ [RIVALRY] Genre: {g_name}")
+    games = fetch_games(count=2, genre_id=g_id)
+    if len(games) < 2: return
+    
+    t1, t2 = clean_game_hashtag(games[0]['name']), clean_game_hashtag(games[1]['name'])
+    p = f"Compare {games[0]['name']} and {games[1]['name']} (both {g_name}). Under 130 chars. Ask fans to pick. No hashtags."
+    text = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY).messages.create(
+        model="claude-3-haiku-20240307", max_tokens=200, messages=[{"role": "user", "content": p}]
+    ).content[0].text.strip()
+    
+    collage = create_collage([download_image(g['background_image']) for g in games], grid=(2,1))
+    post_to_bsky(bsky, f"{text}\n\n#Retro #RetroGaming {t1} {t2}", [collage])
 
-# --- MAIN EXECUTION ---
+# --- DISPATCHER ---
+
 def main():
     logger.info("--- 🚀 NOSTALGIA BOT STARTING ---")
     try:
         bsky = Client(); bsky.login(BSKY_HANDLE, BSKY_PASSWORD)
-        logger.info("📡 Connected.")
+        logger.info("📡 [AUTH] Connected.")
     except Exception as e:
-        logger.error(f"❌ Auth Fail: {e}"); return
+        logger.error(f"❌ [AUTH FAIL]: {e}"); return
 
-    # Manual vs Auto Logic
     forced = os.environ.get("FORCED_SLOT", "")
     manual = os.environ.get("IS_MANUAL") == "true"
     now = datetime.utcnow()
     slot_id = int(re.search(r'Slot\s*(\d+)', forced).group(1)) if manual else SCHEDULE.get(now.weekday(), {}).get(now.hour)
 
-    if not slot_id: return
-    logger.info(f"🚀 Executing Slot {slot_id}")
+    if not slot_id:
+        logger.info("⏳ No slot scheduled."); return
 
-    # Handler mapping
-    if slot_id in [13, 14]: run_on_this_day(bsky)
-    elif slot_id == 4: run_single_game(bsky, "unpopular opinion")
-    elif slot_id == 6: run_single_game(bsky, "hidden gem")
-    elif slot_id == 3: run_rivalry(bsky)
-    # ... Add remaining slot mappings ...
+    logger.info(f"🚀 Executing Slot {slot_id}")
+    handlers = {
+        13: run_on_this_day, 14: run_on_this_day,
+        3: run_rivalry, 18: run_rivalry,
+        4: lambda b: run_single_game(b, "unpopular opinion"),
+        6: lambda b: run_single_game(b, "hidden gem"),
+        9: lambda b: run_single_game(b, "aesthetic pixel art"),
+        11: lambda b: run_single_game(b, "nostalgic memory")
+    }
+    
+    if slot_id in handlers:
+        handlers[slot_id](bsky)
+    
+    logger.info("--- 🏁 BOT RUN FINISHED ---")
 
 if __name__ == "__main__":
     main()
