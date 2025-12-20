@@ -11,7 +11,7 @@ from PIL import Image
 from atproto import Client, models, client_utils
 import anthropic
 
-# --- LOGGING SETUP ---
+# --- LOGGING SETUP (Comprehensive Diagnostic) ---
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s [%(levelname)s] %(message)s',
@@ -44,13 +44,14 @@ RETRO_PLATFORMS = {
 RETRO_IDS_STR = ",".join(map(str, RETRO_PLATFORMS.keys()))
 GENRES = {"Platformer": 83, "Shooter": 2, "RPG": 5, "Fighting": 6, "Racing": 1}
 
+# UTC SCHEDULE
 SCHEDULE = {
     0: {9: 1, 15: 2, 21: 13}, 1: {9: 9, 15: 3, 21: 14}, 2: {9: 4, 15: 17, 21: 13},
     3: {9: 6, 15: 18, 21: 14}, 4: {9: 7, 15: 8, 21: 13}, 5: {9: 9, 15: 10, 21: 15},
     6: {9: 11, 15: 12, 21: 13}
 }
 
-# --- HELPERS ---
+# --- CORE HELPERS ---
 
 def load_json(filename, default):
     if os.path.exists(filename):
@@ -70,12 +71,14 @@ def download_image(url):
 
 def image_to_bytes(img):
     quality = 85
-    for _ in range(5):
+    for i in range(5):
         buf = BytesIO()
         temp_img = img.convert("RGB")
         temp_img.save(buf, format="JPEG", quality=quality)
         data = buf.getvalue()
-        if len(data) < 950000: return data
+        if len(data) < 950000:
+            logger.info(f"📸 Image compressed to {len(data)/1024:.2f}KB (Quality: {quality})")
+            return data
         quality -= 15
     return data
 
@@ -129,10 +132,13 @@ def get_platform_tags(game_data, limit=1):
 def deep_fetch_game(game_id):
     url = f"https://api.rawg.io/api/games/{game_id}?key={RAWG_API_KEY}"
     try:
+        logger.info(f"💎 [DEEP FETCH] URL: {url}")
         resp = requests.get(url, timeout=10)
-        return resp.json()
+        data = resp.json()
+        logger.info(f"📊 [META] Name: {data.get('name')} | Rating: {data.get('rating')}/5")
+        return data
     except Exception as e:
-        logger.error(f"❌ Deep Fetch Failed: {e}")
+        logger.error(f"❌ Deep Fetch Fail: {e}")
         return None
 
 def fetch_games_list(count=1, genre_id=None):
@@ -145,7 +151,7 @@ def fetch_games_list(count=1, genre_id=None):
         valid = [g for g in data if g['id'] not in used]
         return random.sample(valid, min(count, len(valid))) if valid else []
     except Exception as e:
-        logger.error(f"❌ List Fetch Failed: {e}")
+        logger.error(f"❌ List Fetch Fail: {e}")
         return []
 
 # --- POSTING SYSTEM ---
@@ -156,14 +162,20 @@ def post_with_retry(bsky, game_id, theme, custom_header=""):
     
     name, genre = full_game['name'], ", ".join([g['name'] for g in full_game['genres'][:2]])
     r_date = full_game.get('released', 'N/A')
+    rating = full_game.get('rating', 0)
     p_tags = get_platform_tags(full_game, 1)
     g_tag = clean_game_hashtag(name)
     
+    logger.info(f"📊 Processing: {name}")
+
     for attempt in range(1, 4):
-        p = f"Write a {theme} post about '{name}' ({genre}) released {r_date}. Under 100 chars. No hashtags."
-        if attempt == 2: p = f"RETRY: Summarize {name} in one short sentence. Max 60 chars."
+        p = (f"Write a {theme} post about '{name}' ({genre}) released {r_date}. "
+             f"Game Rating: {rating}/5. Instructions: If the rating is high, be specifically controversial. "
+             f"MANDATORY: End with a question for fans. Under 110 chars. No hashtags.")
         
-        if attempt == 3: text = f"The {genre} classic {name} ({r_date[:4] if len(r_date)>4 else r_date})."
+        if attempt == 2: p = f"RETRY: Summarize {name} in one short sentence with a question. Max 60 chars."
+        
+        if attempt == 3: text = f"Does {name} ({r_date[:4]}) still hold up today?"
         else:
             msg = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY).messages.create(
                 model="claude-3-haiku-20240307", max_tokens=150, messages=[{"role": "user", "content": p}]
@@ -238,7 +250,7 @@ def run_rivalry(bsky):
     collage = create_collage([i for i in collage_imgs if i], grid=(2,1))
     
     blobs = []
-    if collage: blobs.append(models.AppBskyEmbedImages.Image(alt="Rivalry Collage", image=bsky.upload_blob(image_to_bytes(collage)).blob))
+    if collage: blobs.append(models.AppBskyEmbedImages.Image(alt="Rivalry", image=bsky.upload_blob(image_to_bytes(collage)).blob))
     if os.path.exists("images/promo_ad.jpg"):
         with Image.open("images/promo_ad.jpg") as ad: blobs.append(models.AppBskyEmbedImages.Image(alt="Promo", image=bsky.upload_blob(image_to_bytes(ad.copy())).blob))
 
@@ -262,7 +274,7 @@ def run_elimination(bsky):
     collage = create_collage([p for p in pil_imgs if p], grid=(2,2))
     
     blobs = []
-    if collage: blobs.append(models.AppBskyEmbedImages.Image(alt="Elimination Collage", image=bsky.upload_blob(image_to_bytes(collage)).blob))
+    if collage: blobs.append(models.AppBskyEmbedImages.Image(alt="Elimination", image=bsky.upload_blob(image_to_bytes(collage)).blob))
     if os.path.exists("images/promo_ad.jpg"):
         with Image.open("images/promo_ad.jpg") as ad: blobs.append(models.AppBskyEmbedImages.Image(alt="Promo", image=bsky.upload_blob(image_to_bytes(ad.copy())).blob))
 
@@ -292,7 +304,7 @@ def main():
         7: run_elimination,
         3: run_rivalry, 18: run_rivalry,
         13: run_on_this_day, 14: run_on_this_day,
-        9: lambda b: run_single_game(b, "aesthetic pixel art visuals"),
+        9: lambda b: run_single_game(b, "aesthetic visuals"),
         11: lambda b: run_single_game(b, "childhood memory")
     }
     
