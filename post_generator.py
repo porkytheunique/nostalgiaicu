@@ -69,10 +69,19 @@ def download_image(url):
     except: return None
 
 def image_to_bytes(img):
-    buf = BytesIO()
-    img = img.convert("RGB")
-    img.save(buf, format="JPEG", quality=85)
-    return buf.getvalue()
+    """
+    Recursive compressor to ensure image is < 970KB for Bluesky.
+    """
+    quality = 85
+    for _ in range(5):
+        buf = BytesIO()
+        temp_img = img.convert("RGB")
+        temp_img.save(buf, format="JPEG", quality=quality)
+        data = buf.getvalue()
+        if len(data) < 950000: # Safe buffer under 1MB
+            return data
+        quality -= 15 # Drop quality if too large
+    return data
 
 def create_collage(images, grid=(2,1)):
     if not images: return None
@@ -176,11 +185,12 @@ def post_with_retry(bsky, game_id, theme, custom_header=""):
             
             if os.path.exists("images/promo_ad.jpg"):
                 with Image.open("images/promo_ad.jpg") as ad:
-                    imgs.append(ad.copy()) # Copy ensures file isn't closed prematurely
+                    imgs.append(ad.copy())
 
             blobs = []
             for img in imgs[:4]:
-                blob = bsky.upload_blob(image_to_bytes(img)).blob
+                img_data = image_to_bytes(img)
+                blob = bsky.upload_blob(img_data).blob
                 blobs.append(models.AppBskyEmbedImages.Image(alt=f"{name} Screenshot", image=blob))
             
             bsky.send_post(tb, embed=models.AppBskyEmbedImages.Main(images=blobs))
