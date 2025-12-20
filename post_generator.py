@@ -50,7 +50,7 @@ SCHEDULE = {
     6: {9: 11, 15: 12, 21: 13}
 }
 
-# --- CORE HELPERS ---
+# --- HELPERS ---
 
 def load_json(filename, default):
     if os.path.exists(filename):
@@ -73,6 +73,31 @@ def image_to_bytes(img):
     img = img.convert("RGB")
     img.save(buf, format="JPEG", quality=85)
     return buf.getvalue()
+
+def create_collage(images, grid=(2,1)):
+    if not images: return None
+    target_h = 600
+    resized_imgs = []
+    for img in images:
+        aspect = img.width / img.height
+        resized_imgs.append(img.resize((int(target_h * aspect), target_h)))
+    if grid == (2,1):
+        total_w = sum(i.width for i in resized_imgs)
+        collage = Image.new('RGB', (total_w, target_h))
+        x_off = 0
+        for img in resized_imgs:
+            collage.paste(img, (x_off, 0)); x_off += img.width
+        return collage
+    elif grid == (2,2):
+        target_size = 600
+        collage = Image.new('RGB', (target_size*2, target_size*2))
+        for idx, img in enumerate(resized_imgs[:4]):
+            min_dim = min(img.width, img.height)
+            left, top = (img.width - min_dim)/2, (img.height - min_dim)/2
+            img = img.crop((left, top, left+min_dim, top+min_dim)).resize((target_size, target_size))
+            collage.paste(img, ((idx % 2) * target_size, (idx // 2) * target_size))
+        return collage
+    return images[0]
 
 # --- AUTHORITY LOGIC ---
 
@@ -98,8 +123,15 @@ def get_platform_tags(game_data, limit=1):
 
 def deep_fetch_game(game_id):
     url = f"https://api.rawg.io/api/games/{game_id}?key={RAWG_API_KEY}"
-    logger.info(f"💎 [DEEP FETCH] Querying game_id {game_id}")
     return requests.get(url).json()
+
+def fetch_games_list(count=1, genre_id=None):
+    used = load_json('history_games.json', [])
+    url = f"https://api.rawg.io/api/games?key={RAWG_API_KEY}&ordering=-rating&page_size=40&platforms={RETRO_IDS_STR}"
+    if genre_id: url += f"&genres={genre_id}"
+    resp = requests.get(url).json().get('results', [])
+    valid = [g for g in resp if g['id'] not in used]
+    return random.sample(valid, min(count, len(valid))) if valid else []
 
 # --- POSTING SYSTEM ---
 
@@ -123,57 +155,120 @@ def post_with_retry(bsky, game_id, theme, custom_header=""):
             )
             text = msg.content[0].text.strip().replace('"', '')
 
-        # BUILD TEXTBUILDER FOR ACTIVE HASHTAGS
         tb = client_utils.TextBuilder()
         tb.text(f"{custom_header}{text}\n\n")
-        
-        # Add Hashtags as active links
         all_tags = list(set(["#Retro", "#RetroGaming", g_tag] + p_tags))
         for i, tag in enumerate(all_tags):
             tb.tag(tag, tag.replace("#", ""))
             if i < len(all_tags) - 1: tb.text(" ")
 
         if len(tb.build_text()) < 298:
-            # IMAGE LOGIC
-            imgs_to_upload = []
+            imgs = []
             main_img = download_image(full_game['background_image'])
-            if main_img: imgs_to_upload.append(main_img)
+            if main_img: imgs.append(main_img)
             
-            screens_added = 0
+            screens = 0
             for shot in full_game.get('short_screenshots', []):
-                if screens_added >= 2: break
+                if screens >= 2: break
                 if shot['image'] == full_game['background_image']: continue
                 s_img = download_image(shot['image'])
-                if s_img:
-                    imgs_to_upload.append(s_img)
-                    screens_added += 1
+                if s_img: imgs.append(s_img); screens += 1
             
             if os.path.exists("images/promo_ad.jpg"):
-                with open("images/promo_ad.jpg", "rb") as f:
-                    imgs_to_upload.append(Image.open(f))
+                with Image.open("images/promo_ad.jpg") as ad:
+                    imgs.append(ad.copy()) # Copy ensures file isn't closed prematurely
 
-            # UPLOAD
             blobs = []
-            for img in imgs_to_upload[:4]:
+            for img in imgs[:4]:
                 blob = bsky.upload_blob(image_to_bytes(img)).blob
                 blobs.append(models.AppBskyEmbedImages.Image(alt=f"{name} Screenshot", image=blob))
             
             bsky.send_post(tb, embed=models.AppBskyEmbedImages.Main(images=blobs))
-            logger.info(f"✅ Post successful: {name}")
             save_json('history_games.json', (load_json('history_games.json', []) + [game_id])[-2000:])
             return True
     return False
 
-# (Standard Fetch Logic Restored)
-def fetch_games_list(count=1, genre_id=None):
-    used = load_json('history_games.json', [])
-    url = f"https://api.rawg.io/api/games?key={RAWG_API_KEY}&ordering=-rating&page_size=40&platforms={RETRO_IDS_STR}"
-    if genre_id: url += f"&genres={genre_id}"
-    resp = requests.get(url).json().get('results', [])
-    valid = [g for g in resp if g['id'] not in used]
-    return random.sample(valid, min(count, len(valid))) if valid else []
+# --- SLOT HANDLERS ---
 
-# --- SLOTS ---
+def run_on_this_day(bsky):
+    m, d = datetime.now().month, datetime.now().day
+    for _ in range(10): 
+        y = random.randint(1985, 2005)
+        ds = f"{y}-{m:02d}-{d:02d}"
+        resp = requests.get(f"https://api.rawg.io/api/games?key={RAWG_API_KEY}&dates={ds},{ds}&platforms={RETRO_IDS_STR}").json()
+        if resp.get('results'):
+            if post_with_retry(bsky, resp['results'][0]['id'], "celebratory", f"📅 On This Day in {y}\n\n"): return
+    run_single_game(bsky, "hidden gem")
+
+def run_rivalry(bsky):
+    g_name, g_id = random.choice(list(GENRES.items()))
+    games = fetch_games_list(count=2, genre_id=g_id)
+    if len(games) < 2: return
+    
+    t1, t2 = clean_game_hashtag(games[0]['name']), clean_game_hashtag(games[1]['name'])
+    p = f"Compare {games[0]['name']} and {games[1]['name']} (both {g_name}). Under 120 chars. Ask fans to pick. No hashtags."
+    text = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY).messages.create(
+        model="claude-3-haiku-20240307", max_tokens=200, messages=[{"role": "user", "content": p}]
+    ).content[0].text.strip()
+    
+    tb = client_utils.TextBuilder()
+    tb.text(f"{text}\n\n")
+    all_tags = ["#Retro", "#RetroGaming", t1, t2, "#Rivalry"]
+    for i, tag in enumerate(all_tags):
+        tb.tag(tag, tag.replace("#", "")); 
+        if i < len(all_tags) - 1: tb.text(" ")
+
+    collage_imgs = []
+    for g in games:
+        img = download_image(g['background_image'])
+        if img: collage_imgs.append(img)
+    
+    collage = create_collage(collage_imgs, grid=(2,1))
+    
+    blobs = []
+    if collage:
+        blob = bsky.upload_blob(image_to_bytes(collage)).blob
+        blobs.append(models.AppBskyEmbedImages.Image(alt="Rivalry Collage", image=blob))
+    
+    if os.path.exists("images/promo_ad.jpg"):
+        with Image.open("images/promo_ad.jpg") as ad:
+            blob = bsky.upload_blob(image_to_bytes(ad.copy())).blob
+            blobs.append(models.AppBskyEmbedImages.Image(alt="Promo", image=blob))
+
+    bsky.send_post(tb, embed=models.AppBskyEmbedImages.Main(images=blobs[:4]))
+
+def run_elimination(bsky):
+    g_name, g_id = random.choice(list(GENRES.items()))
+    games = fetch_games_list(count=4, genre_id=g_id)
+    if len(games) < 4: return
+    
+    game_list_text = ""
+    for idx, g in enumerate(games): game_list_text += f"{idx+1}. {g['name']}\n"
+    
+    p = f"Ask: 'Delete one of these {g_name} classics forever. Which one goes?' Under 100 chars. No hashtags."
+    text = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY).messages.create(
+        model="claude-3-haiku-20240307", max_tokens=200, messages=[{"role": "user", "content": p}]
+    ).content[0].text.strip()
+    
+    tb = client_utils.TextBuilder()
+    tb.text(f"{text}\n\n{game_list_text}\n")
+    tb.tag("#Retro", "Retro"); tb.text(" "); tb.tag("#RetroGaming", "RetroGaming"); tb.text(" "); tb.tag("#Nostalgia", "Nostalgia")
+
+    pil_imgs = [download_image(g['background_image']) for g in games]
+    collage = create_collage([p for p in pil_imgs if p], grid=(2,2))
+    
+    blobs = []
+    if collage:
+        blob = bsky.upload_blob(image_to_bytes(collage)).blob
+        blobs.append(models.AppBskyEmbedImages.Image(alt="Elimination Collage", image=blob))
+    
+    if os.path.exists("images/promo_ad.jpg"):
+        with Image.open("images/promo_ad.jpg") as ad:
+            blob = bsky.upload_blob(image_to_bytes(ad.copy())).blob
+            blobs.append(models.AppBskyEmbedImages.Image(alt="Promo", image=blob))
+
+    bsky.send_post(tb, embed=models.AppBskyEmbedImages.Main(images=blobs))
+
 def run_single_game(bsky, theme):
     games = fetch_games_list(count=1)
     if games: post_with_retry(bsky, games[0]['id'], theme)
@@ -182,7 +277,6 @@ def main():
     logger.info("--- 🚀 NOSTALGIA BOT STARTING ---")
     try:
         bsky = Client(); bsky.login(BSKY_HANDLE, BSKY_PASSWORD)
-        logger.info("📡 [AUTH] Connected.")
     except Exception as e:
         logger.error(f"❌ [AUTH FAIL]: {e}"); return
 
@@ -197,8 +291,11 @@ def main():
     handlers = {
         4: lambda b: run_single_game(b, "unpopular opinion"),
         6: lambda b: run_single_game(b, "hidden gem"),
-        9: lambda b: run_single_game(b, "aesthetic visuals"),
-        11: lambda b: run_single_game(b, "nostalgic memory")
+        7: run_elimination,
+        3: run_rivalry, 18: run_rivalry,
+        13: run_on_this_day, 14: run_on_this_day,
+        9: lambda b: run_single_game(b, "aesthetic pixel art visuals"),
+        11: lambda b: run_single_game(b, "nostalgic childhood memory")
     }
     
     if slot_id in handlers: handlers[slot_id](bsky)
