@@ -19,13 +19,13 @@ logging.basicConfig(
 )
 logger = logging.getLogger()
 
-# --- CONFIGURATION ---
+# --- CONFIGURATION (Synced with GitHub Env Names) ---
 RAWG_API_KEY = os.environ.get("RAWG_API_KEY")
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY")
-BSKY_HANDLE = os.environ.get("BLUESKY_HANDLE")
-BSKY_PASSWORD = os.environ.get("BSKY_PASSWORD")
+BSKY_HANDLE = os.environ.get("BLUESKY_HANDLE") # Matches your log
+BSKY_PASSWORD = os.environ.get("BLUESKY_PASSWORD") # Matches your log
 
-# --- AUTHORITY FRANCHISE MAP (Option B) ---
+# --- AUTHORITY FRANCHISE MAP ---
 FRANCHISE_MAP = {
     "ZELDA": "#LegendOfZelda", "MARIO": "#SuperMario", "METROID": "#Metroid",
     "SONIC": "#SonicTheHedgehog", "FINAL FANTASY": "#FinalFantasy",
@@ -45,14 +45,13 @@ RETRO_PLATFORMS = {
 RETRO_IDS_STR = ",".join(map(str, RETRO_PLATFORMS.keys()))
 GENRES = {"Platformer": 83, "Shooter": 2, "RPG": 5, "Fighting": 6, "Racing": 1}
 
-# UTC SCHEDULE
 SCHEDULE = {
     0: {9: 1, 15: 2, 21: 13}, 1: {9: 9, 15: 3, 21: 14}, 2: {9: 4, 15: 17, 21: 13},
     3: {9: 6, 15: 18, 21: 14}, 4: {9: 7, 15: 8, 21: 13}, 5: {9: 9, 15: 10, 21: 15},
     6: {9: 11, 15: 12, 21: 13}
 }
 
-# --- CORE HELPERS ---
+# --- HELPERS ---
 
 def load_json(filename, default):
     if os.path.exists(filename):
@@ -121,7 +120,9 @@ def get_authority_tags(game_name, platforms_data):
 
 def get_milestone_info(game_data):
     try:
-        r_year = datetime.strptime(game_data.get('released', '1900-01-01'), "%Y-%m-%d").year
+        r_date = game_data.get('released')
+        if not r_date: return ""
+        r_year = datetime.strptime(r_date, "%Y-%m-%d").year
         age = 2025 - r_year
         return f"This is the {age}th anniversary year." if age > 0 else ""
     except: return ""
@@ -133,11 +134,12 @@ def deep_fetch_game(game_id):
 
 def fetch_games_list(count=1, genre_id=None):
     used = load_json('history_games.json', [])
-    url = f"https://api.rawg.io/api/games?key={RAWG_API_KEY}&ordering=-rating&page_size=30&platforms={RETRO_IDS_STR}"
+    url = f"https://api.rawg.io/api/games?key={RAWG_API_KEY}&ordering=-rating&page_size=40&platforms={RETRO_IDS_STR}"
     if genre_id: url += f"&genres={genre_id}"
-    data = requests.get(url).json().get('results', [])
-    valid = [g for g in data if g['id'] not in used]
-    return random.sample(valid, min(count, len(valid)))
+    logger.info(f"🔍 [LIST FETCH] URL: {url}")
+    resp = requests.get(url).json().get('results', [])
+    valid = [g for g in resp if g['id'] not in used]
+    return random.sample(valid, min(count, len(valid))) if valid else []
 
 # --- POSTING SYSTEM ---
 
@@ -157,17 +159,22 @@ def post_to_bsky(bsky, final_text, imgs):
 
 def post_with_retry(bsky, game_id, theme, custom_header=""):
     full_game = deep_fetch_game(game_id)
-    name, genre = full_game['name'], ", ".join([g['name'] for g in full_game['genres'][:2]])
-    r_date, m_info = full_game.get('released', 'N/A'), get_milestone_info(full_game)
+    name = full_game['name']
+    genre = ", ".join([g['name'] for g in full_game['genres'][:2]])
+    r_date = full_game.get('released', 'N/A')
+    m_info = get_milestone_info(full_game)
     tags = get_authority_tags(name, full_game['platforms'])
     
     logger.info(f"📊 Processing: {name}")
 
     for attempt in range(1, 4):
-        if attempt == 1: p = f"Post about '{name}' ({genre}) released {r_date}. {m_info} Theme: {theme}. Under 100 chars. No hashtags."
-        elif attempt == 2: p = f"RETRY: Summarize {name} in one short, punchy sentence. Max 60 chars."
+        if attempt == 1: 
+            p = f"Write a {theme} post about '{name}' ({genre}) released {r_date}. {m_info} Under 100 chars. No hashtags. Be engaging."
+        elif attempt == 2: 
+            p = f"RETRY: Summarize {name} in one short, punchy sentence. Max 60 chars."
         
-        if attempt == 3: text = f"The {genre} classic {name} ({r_date[:4]})."
+        if attempt == 3: 
+            text = f"The {genre} classic {name} ({r_date[:4] if len(r_date)>4 else r_date})."
         else:
             msg = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY).messages.create(
                 model="claude-3-haiku-20240307", max_tokens=150, messages=[{"role": "user", "content": p}]
@@ -181,6 +188,7 @@ def post_with_retry(bsky, game_id, theme, custom_header=""):
                 used = load_json('history_games.json', [])
                 save_json('history_games.json', (used + [game_id])[-2000:])
                 return True
+        logger.warning(f"⚠️ Attempt {attempt} too long ({len(final_post)} chars).")
     return False
 
 # --- SLOT HANDLERS ---
@@ -198,25 +206,34 @@ def run_on_this_day(bsky):
 def run_rivalry(bsky):
     g_name, g_id = random.choice(list(GENRES.items()))
     games = fetch_games_list(count=2, genre_id=g_id)
-    if len(games) < 2: return
+    if len(games) < 2: 
+        run_single_game(bsky, "hidden gem")
+        return
     t1, t2 = clean_game_hashtag(games[0]['name']), clean_game_hashtag(games[1]['name'])
     p = f"Compare {games[0]['name']} and {games[1]['name']} (both {g_name}). Under 120 chars. Ask fans to pick. No hashtags."
     text = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY).messages.create(
         model="claude-3-haiku-20240307", max_tokens=200, messages=[{"role": "user", "content": p}]
     ).content[0].text.strip()
     collage = create_collage([download_image(g['background_image']) for g in games])
-    post_to_bsky(bsky, f"{text}\n\n#Retro #RetroGaming {t1} {t2}", [collage])
+    post_to_bsky(bsky, f"{text}\n\n#Retro #RetroGaming {t1} {t2}", [collage] if collage else [])
 
 def run_single_game(bsky, theme):
-    game = fetch_games_list(count=1)
-    if game: post_with_retry(bsky, game[0]['id'], theme)
+    games = fetch_games_list(count=1)
+    if games: 
+        post_with_retry(bsky, games[0]['id'], theme)
+    else:
+        logger.error("❌ No games found to post.")
 
 # --- MAIN ---
 
 def main():
     logger.info("--- 🚀 NOSTALGIA BOT STARTING ---")
     try:
-        if not BSKY_HANDLE or not BSKY_PASSWORD: raise ValueError("Missing BSKY credentials.")
+        # Check environment strictly
+        if not BSKY_HANDLE: logger.error("MISSING: BSKY_HANDLE")
+        if not BSKY_PASSWORD: logger.error("MISSING: BSKY_PASSWORD")
+        if not BSKY_HANDLE or not BSKY_PASSWORD: raise ValueError("Missing BSKY credentials in Environment.")
+        
         bsky = Client()
         bsky.login(BSKY_HANDLE, BSKY_PASSWORD)
         logger.info("📡 [AUTH] Connected.")
@@ -226,20 +243,45 @@ def main():
     forced = os.environ.get("FORCED_SLOT", "")
     manual = os.environ.get("IS_MANUAL") == "true"
     now = datetime.utcnow()
-    slot_id = int(re.search(r'Slot\s*(\d+)', forced).group(1)) if manual else SCHEDULE.get(now.weekday(), {}).get(now.hour)
+    
+    slot_id = None
+    if manual:
+        logger.info(f"🛠️ Manual Trigger: {forced}")
+        match = re.search(r'Slot\s*(\d+)', forced)
+        if match: slot_id = int(match.group(1))
+    else:
+        slot_id = SCHEDULE.get(now.weekday(), {}).get(now.hour)
 
-    if not slot_id: logger.info("⏳ No slot scheduled."); return
-    logger.info(f"🚀 Slot {slot_id}")
+    if not slot_id:
+        logger.info(f"⏳ No slot scheduled (Hour {now.hour}).")
+        return
+        
+    logger.info(f"🚀 Executing Slot {slot_id}")
 
     handlers = {
-        13: run_on_this_day, 14: run_on_this_day, 3: run_rivalry, 18: run_rivalry,
+        1: lambda b: run_single_game(b, "nostalgic memory"),
+        2: lambda b: run_single_game(b, "trivia"),
+        3: run_rivalry, 
         4: lambda b: run_single_game(b, "unpopular opinion"),
         6: lambda b: run_single_game(b, "hidden gem"),
+        7: run_rivalry, # Placeholder for elimination
+        8: lambda b: run_single_game(b, "trivia"),
         9: lambda b: run_single_game(b, "aesthetic pixel art visuals"),
-        11: lambda b: run_single_game(b, "nostalgic childhood memory")
+        10: lambda b: run_single_game(b, "fun fact"),
+        11: lambda b: run_single_game(b, "nostalgic childhood memory"),
+        12: lambda b: run_single_game(b, "fun fact"),
+        13: run_on_this_day, 
+        14: lambda b: run_single_game(b, "trivia"),
+        15: lambda b: run_single_game(b, "nostalgic memory"),
+        17: lambda b: run_single_game(b, "trivia"),
+        18: run_rivalry
     }
     
-    if slot_id in handlers: handlers[slot_id](bsky)
+    if slot_id in handlers: 
+        handlers[slot_id](bsky)
+    else:
+        logger.error(f"❌ No handler for Slot {slot_id}")
+    
     logger.info("--- 🏁 BOT RUN FINISHED ---")
 
 if __name__ == "__main__":
