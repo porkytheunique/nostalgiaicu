@@ -34,7 +34,7 @@ FRANCHISE_MAP = {
     "STREET FIGHTER": "#StreetFighter", "DONKEY KONG": "#DonkeyKong",
     "PHANTASY STAR": "#PhantasyStar", "MIDNIGHT CLUB": "#MidnightClub",
     "TEKKEN": "#Tekken", "MORTAL KOMBAT": "#MortalKombat", "PAC-MAN": "#PacMan",
-    "GODZILLA": "#Godzilla"
+    "GODZILLA": "#Godzilla", "KUNIO": "#KunioKun", "NEKKETSU": "#KunioKun"
 }
 
 RETRO_PLATFORMS = {
@@ -51,7 +51,7 @@ SCHEDULE = {
     6: {9: 11, 15: 12, 21: 13}
 }
 
-# --- CORE HELPERS ---
+# --- HELPERS ---
 
 def load_json(filename, default):
     if os.path.exists(filename):
@@ -79,8 +79,6 @@ def image_to_bytes(img):
         if len(data) < 950000: return data
         quality -= 15
     return data
-
-# --- AUTHORITY LOGIC ---
 
 def clean_game_hashtag(game_name):
     upper_name = game_name.upper()
@@ -122,7 +120,7 @@ def fetch_games_list(count=1, genre_id=None):
 
 # --- POSTING SYSTEM ---
 
-def post_with_retry(bsky, game_id, theme, custom_header=""):
+def post_with_retry(bsky, game_id, theme, slot_tag, custom_header=""):
     full_game = deep_fetch_game(game_id)
     if not full_game: return False
     
@@ -134,22 +132,25 @@ def post_with_retry(bsky, game_id, theme, custom_header=""):
     logger.info(f"📊 [STRICT FETCH] Starting collection for: {name}")
 
     for attempt in range(1, 4):
-        # PROMPT FIX: End with question mandatory
         p = (f"Write a {theme} post about '{name}' ({genre}) released {r_date}. "
              f"MANDATORY: End with a thought-provoking question for fans. Under 110 chars. No hashtags.")
         
         if attempt == 2: p = f"RETRY: Summarize {name} in one sentence with a question. Max 70 chars."
         
-        if attempt == 3: text = f"Is {name} ({r_date[:4]}) still a classic today? What do you think?"
+        if attempt == 3: text = f"Is {name} ({r_date[:4]}) a true classic? What do you think?"
         else:
-            msg = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY).messages.create(
-                model="claude-3-haiku-20240307", max_tokens=150, messages=[{"role": "user", "content": p}]
-            )
-            text = msg.content[0].text.strip().replace('"', '')
+            try:
+                msg = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY).messages.create(
+                    model="claude-3-haiku-20240307", max_tokens=150, messages=[{"role": "user", "content": p}]
+                )
+                text = msg.content[0].text.strip().replace('"', '')
+            except: text = f"Remembering {name} ({r_date[:4]}). Thoughts?"
 
         tb = client_utils.TextBuilder()
         tb.text(f"{custom_header}{text}\n\n")
-        all_tags = list(set(["#Retro", "#RetroGaming", g_tag] + p_tags))
+        
+        # FIX: Combine all tags properly including slot_tag
+        all_tags = list(set(["#Retro", "#RetroGaming", g_tag, slot_tag] + p_tags))
         for i, tag in enumerate(all_tags):
             tb.tag(tag, tag.replace("#", ""))
             if i < len(all_tags) - 1: tb.text(" ")
@@ -158,16 +159,16 @@ def post_with_retry(bsky, game_id, theme, custom_header=""):
             imgs = []
             bg_url = full_game.get('background_image')
             
-            # 1. Background
+            # 1. Main Background
             bg = download_image(bg_url)
             if bg: imgs.append(bg)
             
-            # 2. Strict Extra Screenshots
+            # 2. Aggressive Screenshot Fetch
             all_screens = full_game.get('short_screenshots', [])
             for shot in all_screens:
                 if len(imgs) >= 3: break
                 s_url = shot.get('image')
-                if s_url == bg_url: continue # Skip duplicate
+                if s_url == bg_url: continue 
                 s_img = download_image(s_url)
                 if s_img: imgs.append(s_img)
             
@@ -179,7 +180,8 @@ def post_with_retry(bsky, game_id, theme, custom_header=""):
 
             blobs = []
             for img in imgs[:4]:
-                blob = bsky.upload_blob(image_to_bytes(img)).blob
+                blob_data = image_to_bytes(img)
+                blob = bsky.upload_blob(blob_data).blob
                 blobs.append(models.AppBskyEmbedImages.Image(alt=f"{name}", image=blob))
             
             bsky.send_post(tb, embed=models.AppBskyEmbedImages.Main(images=blobs))
@@ -189,9 +191,9 @@ def post_with_retry(bsky, game_id, theme, custom_header=""):
 
 # --- SLOT HANDLERS ---
 
-def run_single_game(bsky, theme):
+def run_single_game(bsky, theme, slot_tag):
     games = fetch_games_list(count=1)
-    if games: post_with_retry(bsky, games[0]['id'], theme)
+    if games: post_with_retry(bsky, games[0]['id'], theme, slot_tag)
 
 def main():
     logger.info("--- 🚀 NOSTALGIA BOT STARTING ---")
@@ -210,10 +212,10 @@ def main():
     logger.info(f"🚀 Executing Slot {slot_id}")
 
     handlers = {
-        4: lambda b: run_single_game(b, "unpopular opinion"),
-        6: lambda b: run_single_game(b, "obscure hidden gem"),
-        9: lambda b: run_single_game(b, "aesthetic pixel art visuals"),
-        11: lambda b: run_single_game(b, "childhood memory")
+        4: lambda b: run_single_game(b, "unpopular opinion", "#UnpopularOpinion"),
+        6: lambda b: run_single_game(b, "obscure hidden gem", "#HiddenGem"),
+        9: lambda b: run_single_game(b, "aesthetic visuals", "#PixelArt"),
+        11: lambda b: run_single_game(b, "childhood memory", "#Nostalgia")
     }
     
     if slot_id in handlers: handlers[slot_id](bsky)
