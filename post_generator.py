@@ -11,7 +11,7 @@ from PIL import Image
 from atproto import Client, models, client_utils
 import anthropic
 
-# --- LOGGING SETUP (Comprehensive Diagnostic) ---
+# --- LOGGING SETUP ---
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s [%(levelname)s] %(message)s',
@@ -25,7 +25,7 @@ ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY")
 BSKY_HANDLE = os.environ.get("BLUESKY_HANDLE")
 BSKY_PASSWORD = os.environ.get("BLUESKY_PASSWORD")
 
-# --- AUTHORITY FRANCHISE MAP (Option B) ---
+# --- AUTHORITY FRANCHISE MAP ---
 FRANCHISE_MAP = {
     "ZELDA": "#LegendOfZelda", "MARIO": "#SuperMario", "METROID": "#Metroid",
     "SONIC": "#SonicTheHedgehog", "FINAL FANTASY": "#FinalFantasy",
@@ -34,8 +34,7 @@ FRANCHISE_MAP = {
     "STREET FIGHTER": "#StreetFighter", "DONKEY KONG": "#DonkeyKong",
     "PHANTASY STAR": "#PhantasyStar", "MIDNIGHT CLUB": "#MidnightClub",
     "TEKKEN": "#Tekken", "MORTAL KOMBAT": "#MortalKombat", "PAC-MAN": "#PacMan",
-    "GODZILLA": "#Godzilla", "KUNIO": "#KunioKun", "NEKKETSU": "#KunioKun",
-    "ACE COMBAT": "#AceCombat", "KINGDOM HEARTS": "#KingdomHearts"
+    "GODZILLA": "#Godzilla", "KUNIO": "#KunioKun", "NEKKETSU": "#KunioKun"
 }
 
 RETRO_PLATFORMS = {
@@ -46,14 +45,13 @@ RETRO_PLATFORMS = {
 RETRO_IDS_STR = ",".join(map(str, RETRO_PLATFORMS.keys()))
 GENRES = {"Platformer": 83, "Shooter": 2, "RPG": 5, "Fighting": 6, "Racing": 1}
 
-# 09:00, 15:00, 21:00 UTC Dispatcher
 SCHEDULE = {
     0: {9: 1, 15: 2, 21: 13}, 1: {9: 9, 15: 3, 21: 14}, 2: {9: 4, 15: 17, 21: 13},
     3: {9: 6, 15: 18, 21: 14}, 4: {9: 7, 15: 8, 21: 13}, 5: {9: 9, 15: 10, 21: 15},
     6: {9: 11, 15: 12, 21: 13}
 }
 
-# --- CORE HELPERS ---
+# --- HELPERS ---
 
 def load_json(filename, default):
     if os.path.exists(filename):
@@ -72,16 +70,13 @@ def download_image(url):
     except: return None
 
 def image_to_bytes(img):
-    """Recursive compressor ensuring < 970KB."""
     quality = 85
     for i in range(5):
         buf = BytesIO()
         temp_img = img.convert("RGB")
         temp_img.save(buf, format="JPEG", quality=quality)
         data = buf.getvalue()
-        if len(data) < 950000:
-            logger.info(f"📸 Compressed: {len(data)/1024:.1f}KB (Q:{quality})")
-            return data
+        if len(data) < 950000: return data
         quality -= 15
     return data
 
@@ -105,8 +100,6 @@ def create_collage(images, grid=(2,1)):
         return collage
     return images[0]
 
-# --- AUTHORITY LOGIC ---
-
 def clean_game_hashtag(game_name):
     upper = game_name.upper()
     for k, v in FRANCHISE_MAP.items():
@@ -129,7 +122,6 @@ def get_platform_tags(game_data):
 def deep_fetch_game(game_id):
     url = f"https://api.rawg.io/api/games/{game_id}?key={RAWG_API_KEY}"
     try:
-        logger.info(f"💎 [DEEP FETCH] {url}")
         return requests.get(url, timeout=10).json()
     except: return None
 
@@ -143,7 +135,7 @@ def fetch_games_list(count=1, genre_id=None):
         return random.sample(valid, min(count, len(valid))) if valid else []
     except: return []
 
-# --- POSTING ENGINE ---
+# --- THE UNIVERSAL POSTING ENGINE ---
 
 def post_with_retry(bsky, game_id, theme, slot_tag, custom_header=""):
     full = deep_fetch_game(game_id)
@@ -152,7 +144,7 @@ def post_with_retry(bsky, game_id, theme, slot_tag, custom_header=""):
     name, genre, r_date = full['name'], ", ".join([g['name'] for g in full['genres'][:2]]), full.get('released', 'N/A')
     p_tags, g_tag = get_platform_tags(full), clean_game_hashtag(name)
     
-    logger.info(f"📊 [METADATA] Game: {name} | Rating: {full.get('rating')}")
+    logger.info(f"📊 [STRICT IMAGE FETCH] Processing: {name}")
 
     for attempt in range(1, 4):
         p = (f"Write a {theme} post about '{name}' ({genre}) released {r_date}. "
@@ -176,16 +168,26 @@ def post_with_retry(bsky, game_id, theme, slot_tag, custom_header=""):
         if len(tb.build_text()) < 298:
             imgs = []
             bg_url = full.get('background_image')
+            
+            # 1. Main Background
             bg = download_image(bg_url)
             if bg: imgs.append(bg)
             
-            for shot in full.get('short_screenshots', []):
+            # 2. Aggressive Screenshot Scrape
+            screens = full.get('short_screenshots', [])
+            for shot in screens:
                 if len(imgs) >= 3: break
                 s_url = shot.get('image')
                 if s_url == bg_url: continue
                 s_img = download_image(s_url)
                 if s_img: imgs.append(s_img)
             
+            # 3. Fallback: Check additional backgrounds if we still don't have 3
+            if len(imgs) < 3 and full.get('background_image_additional'):
+                add_img = download_image(full.get('background_image_additional'))
+                if add_img: imgs.append(add_img)
+
+            # 4. Mandatory Promo Ad
             if os.path.exists("images/promo_ad.jpg"):
                 with Image.open("images/promo_ad.jpg") as ad: imgs.append(ad.copy())
 
@@ -206,6 +208,7 @@ def run_on_this_day(bsky):
         try:
             r = requests.get(f"https://api.rawg.io/api/games?key={RAWG_API_KEY}&dates={ds},{ds}&platforms={RETRO_IDS_STR}").json()
             if r.get('results'):
+                # Funnel through the universal engine to get the images right
                 if post_with_retry(bsky, r['results'][0]['id'], "celebratory", "#OnThisDay", f"📅 On This Day in {y}\n\n"): return
         except: continue
     run_single_game(bsky, "hidden gem", "#HiddenGem")
@@ -216,16 +219,19 @@ def run_rivalry(bsky):
     if len(games) < 2: return
     t1, t2 = clean_game_hashtag(games[0]['name']), clean_game_hashtag(games[1]['name'])
     p = f"Compare {games[0]['name']} and {games[1]['name']} (both {g_name}). Under 120 chars. Ask fans to pick."
-    text = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY).messages.create(
+    msg = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY).messages.create(
         model="claude-3-haiku-20240307", max_tokens=200, messages=[{"role": "user", "content": p}]
-    ).content[0].text.strip()
+    )
+    text = msg.content[0].text.strip()
     tb = client_utils.TextBuilder()
     tb.text(f"{text}\n\n")
     tags = ["#Retro", "#RetroGaming", t1, t2, "#Rivalry"]
     for i, t in enumerate(tags):
         tb.tag(t, t.replace("#", "")); 
         if i < len(tags)-1: tb.text(" ")
-    collage = create_collage([download_image(g['background_image']) for g in games], grid=(2,1))
+    
+    collage_imgs = [download_image(g['background_image']) for g in games]
+    collage = create_collage([i for i in collage_imgs if i], grid=(2,1))
     blobs = []
     if collage: blobs.append(models.AppBskyEmbedImages.Image(alt="Rivalry", image=bsky.upload_blob(image_to_bytes(collage)).blob))
     if os.path.exists("images/promo_ad.jpg"):
@@ -238,15 +244,16 @@ def run_elimination(bsky):
     if len(games) < 4: return
     lst = "".join([f"{idx+1}. {g['name']}\n" for idx, g in enumerate(games)])
     p = f"Ask: 'Delete one of these {g_name} classics forever. Which one goes?' Under 100 chars."
-    text = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY).messages.create(
+    msg = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY).messages.create(
         model="claude-3-haiku-20240307", max_tokens=200, messages=[{"role": "user", "content": p}]
-    ).content[0].text.strip()
+    )
+    text = msg.content[0].text.strip()
     tb = client_utils.TextBuilder()
     tb.text(f"{text}\n\n{lst}\n")
     tags = ["#Retro", "#RetroGaming", "#Nostalgia", "#Elimination"]
     for i, t in enumerate(tags):
         tb.tag(t, t.replace("#", "")); 
-        if i < len(all_tags)-1: tb.text(" ")
+        if i < len(tags)-1: tb.text(" ")
     collage = create_collage([download_image(g['background_image']) for g in games], grid=(2,2))
     blobs = []
     if collage: blobs.append(models.AppBskyEmbedImages.Image(alt="Elimination", image=bsky.upload_blob(image_to_bytes(collage)).blob))
