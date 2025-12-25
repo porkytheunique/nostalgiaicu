@@ -25,6 +25,14 @@ ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY")
 BSKY_HANDLE = os.environ.get("BLUESKY_HANDLE")
 BSKY_PASSWORD = os.environ.get("BLUESKY_PASSWORD")
 
+# --- MONDAY FEATURE DEFINITIONS ---
+MONDAY_FEATURES = [
+    {"name": "Magazine Library", "url": "https://www.nostalgia.icu/library/", "img": "images/ad_library.jpg", "texts": ["Flip through history! 📖 Thousands of classic gaming magazines preserved.", "Revisit the golden era of gaming journalism. 📰"], "tags": ["#Retro", "#RetroGaming", "#Nostalgia", "#Library"]},
+    {"name": "Retro Media Player", "url": "https://www.nostalgia.icu/media/", "img": "images/ad_media.jpg", "texts": ["Tune in to the past! 📺 Vintage cartoons and commercials streaming now.", "Your portal to broadcast history. 📡"], "tags": ["#Retro", "#RetroGaming", "#Nostalgia", "#RetroTV"]},
+    {"name": "Retro Radio", "url": "https://www.nostalgia.icu/radio/", "img": "images/ad_radio.jpg", "texts": ["Vibe to the classics. 📻 24/7 Retro Radio playing the best VGM.", "The soundtrack of your childhood is live. 🎧"], "tags": ["#Retro", "#RetroGaming", "#Nostalgia", "#Radio"]},
+    {"name": "System Advisor", "url": "https://www.nostalgia.icu/advisor/", "img": "images/ad_advisor.jpg", "texts": ["Stuck in a game? 🤖 Chat with our System Curator.", "Find the value of your old carts. 💡"], "tags": ["#Retro", "#RetroGaming", "#Nostalgia", "#Advisor"]},
+]
+
 # --- AUTHORITY FRANCHISE MAP ---
 FRANCHISE_MAP = {
     "ZELDA": "#LegendOfZelda", "MARIO": "#SuperMario", "METROID": "#Metroid",
@@ -33,8 +41,7 @@ FRANCHISE_MAP = {
     "CASTLEVANIA": "#Castlevania", "MEGA MAN": "#MegaMan",
     "STREET FIGHTER": "#StreetFighter", "DONKEY KONG": "#DonkeyKong",
     "PHANTASY STAR": "#PhantasyStar", "MIDNIGHT CLUB": "#MidnightClub",
-    "TEKKEN": "#Tekken", "MORTAL KOMBAT": "#MortalKombat", "PAC-MAN": "#PacMan",
-    "GODZILLA": "#Godzilla", "KUNIO": "#KunioKun", "NEKKETSU": "#KunioKun"
+    "TEKKEN": "#Tekken", "MORTAL KOMBAT": "#MortalKombat", "PAC-MAN": "#PacMan"
 }
 
 RETRO_PLATFORMS = {
@@ -45,10 +52,16 @@ RETRO_PLATFORMS = {
 RETRO_IDS_STR = ",".join(map(str, RETRO_PLATFORMS.keys()))
 GENRES = {"Platformer": 83, "Shooter": 2, "RPG": 5, "Fighting": 6, "Racing": 1}
 
+# --- SCHEDULE DEFINITION ---
+# 0=Mon, 1=Tue, 2=Wed, 3=Thu, 4=Fri, 5=Sat, 6=Sun
 SCHEDULE = {
-    0: {9: 1, 15: 2, 21: 13}, 1: {9: 9, 15: 3, 21: 14}, 2: {9: 4, 15: 17, 21: 13},
-    3: {9: 6, 15: 18, 21: 14}, 4: {9: 7, 15: 8, 21: 13}, 5: {9: 9, 15: 10, 21: 15},
-    6: {9: 11, 15: 12, 21: 13}
+    0: {9: 1, 15: 2, 21: 13},  # Mon: Ad, Question, OnThisDay
+    1: {9: 9, 15: 3, 21: 14},  # Tue: Art, Rivalry, Fact
+    2: {9: 4, 15: 17, 21: 13}, # Wed: Unpopular, Fact, OnThisDay
+    3: {9: 6, 15: 18, 21: 14}, # Thu: HiddenGem, Rivalry, Fact
+    4: {9: 7, 15: 8, 21: 13},  # Fri: Elimination, Fact, OnThisDay
+    5: {9: 9, 15: 10, 21: 15}, # Sat: Art, Trivia, Memory
+    6: {9: 11, 15: 12, 21: 13} # Sun: Memory, Fact, OnThisDay
 }
 
 # --- HELPERS ---
@@ -135,7 +148,7 @@ def fetch_games_list(count=1, genre_id=None):
         return random.sample(valid, min(count, len(valid))) if valid else []
     except: return []
 
-# --- THE UNIVERSAL POSTING ENGINE ---
+# --- POSTING SYSTEM ---
 
 def post_with_retry(bsky, game_id, theme, slot_tag, custom_header=""):
     full = deep_fetch_game(game_id)
@@ -173,21 +186,19 @@ def post_with_retry(bsky, game_id, theme, slot_tag, custom_header=""):
             bg = download_image(bg_url)
             if bg: imgs.append(bg)
             
-            # 2. Aggressive Screenshot Scrape
-            screens = full.get('short_screenshots', [])
-            for shot in screens:
+            # 2. Aggressive Scrape for 3 UNIQUE game images
+            all_possible_urls = [s.get('image') for s in full.get('short_screenshots', [])]
+            if full.get('background_image_additional'):
+                all_possible_urls.append(full.get('background_image_additional'))
+            
+            unique_urls = list(dict.fromkeys([u for u in all_possible_urls if u and u != bg_url]))
+            
+            for s_url in unique_urls:
                 if len(imgs) >= 3: break
-                s_url = shot.get('image')
-                if s_url == bg_url: continue
                 s_img = download_image(s_url)
                 if s_img: imgs.append(s_img)
             
-            # 3. Fallback: Check additional backgrounds if we still don't have 3
-            if len(imgs) < 3 and full.get('background_image_additional'):
-                add_img = download_image(full.get('background_image_additional'))
-                if add_img: imgs.append(add_img)
-
-            # 4. Mandatory Promo Ad
+            # 3. Final Promo Ad (The +1)
             if os.path.exists("images/promo_ad.jpg"):
                 with Image.open("images/promo_ad.jpg") as ad: imgs.append(ad.copy())
 
@@ -200,6 +211,27 @@ def post_with_retry(bsky, game_id, theme, slot_tag, custom_header=""):
 
 # --- SLOT HANDLERS ---
 
+def run_ad_post(bsky):
+    history = load_json('history_ads.json', {'last_index': -1})
+    idx = (history['last_index'] + 1) % len(MONDAY_FEATURES)
+    feature = MONDAY_FEATURES[idx]
+    
+    tb = client_utils.TextBuilder()
+    tb.text(random.choice(feature['texts']) + "\n\n🔗 Visit: ")
+    tb.link(feature['url'], feature['url'])
+    tb.text("\n\n")
+    for tag in feature['tags']:
+        tb.tag(tag, tag.replace("#", ""))
+        tb.text(" ")
+        
+    if os.path.exists(feature['img']):
+        with open(feature['img'], 'rb') as f:
+            upload = bsky.upload_blob(f.read())
+            embed = models.AppBskyEmbedImages.Main(images=[models.AppBskyEmbedImages.Image(alt=feature['name'], image=upload.blob)])
+            bsky.send_post(tb, embed=embed)
+            save_json('history_ads.json', {'last_index': idx})
+            logger.info(f"✅ Posted Ad: {feature['name']}")
+
 def run_on_this_day(bsky):
     m, d = datetime.now().month, datetime.now().day
     for _ in range(10):
@@ -208,7 +240,6 @@ def run_on_this_day(bsky):
         try:
             r = requests.get(f"https://api.rawg.io/api/games?key={RAWG_API_KEY}&dates={ds},{ds}&platforms={RETRO_IDS_STR}").json()
             if r.get('results'):
-                # Funnel through the universal engine to get the images right
                 if post_with_retry(bsky, r['results'][0]['id'], "celebratory", "#OnThisDay", f"📅 On This Day in {y}\n\n"): return
         except: continue
     run_single_game(bsky, "hidden gem", "#HiddenGem")
@@ -272,27 +303,45 @@ def main():
     except: logger.error("❌ Auth fail"); return
 
     f = os.environ.get("FORCED_SLOT", ""); man = os.environ.get("IS_MANUAL") == "true"; now = datetime.utcnow()
-    slot_id = int(re.search(r'Slot\s*(\d+)', f).group(1)) if man else SCHEDULE.get(now.weekday(), {}).get(now.hour)
+    
+    # IMPROVED MANUAL PARSING
+    slot_id = None
+    if man:
+        match = re.search(r'Slot\s*(\d+)', f)
+        if match: 
+            slot_id = int(match.group(1))
+            logger.info(f"🛠️ Manual Trigger Detected: Slot {slot_id}")
+    else:
+        slot_id = SCHEDULE.get(now.weekday(), {}).get(now.hour)
 
-    if not slot_id: return
-    logger.info(f"🚀 Executing Slot {slot_id}")
+    if not slot_id: 
+        logger.info(f"⏳ No slot scheduled for Hour {now.hour}. Exiting.")
+        return
 
     handlers = {
-        1: lambda b: run_single_game(b, "nostalgic memory", "#Nostalgia"),
-        2: lambda b: run_single_game(b, "fun trivia", "#FunFact"),
-        3: run_rivalry, 4: lambda b: run_single_game(b, "unpopular opinion", "#UnpopularOpinion"),
+        1: run_ad_post,  # FIXED: Slot 1 is now Ad Post
+        2: lambda b: run_single_game(b, "nostalgic question", "#RetroGaming"),
+        3: run_rivalry, 
+        4: lambda b: run_single_game(b, "unpopular opinion", "#UnpopularOpinion"),
         6: lambda b: run_single_game(b, "obscure hidden gem", "#HiddenGem"),
-        7: run_elimination, 8: lambda b: run_single_game(b, "fun fact", "#FunFact"),
+        7: run_elimination, 
+        8: lambda b: run_single_game(b, "fun fact", "#FunFact"),
         9: lambda b: run_single_game(b, "aesthetic visuals", "#PixelArt"),
         10: lambda b: run_single_game(b, "trivia", "#FunFact"),
         11: lambda b: run_single_game(b, "childhood memory", "#Nostalgia"),
         12: lambda b: run_single_game(b, "fun fact", "#FunFact"),
-        13: run_on_this_day, 14: run_on_this_day,
+        13: run_on_this_day, 
+        14: lambda b: run_single_game(b, "trivia", "#FunFact"),
         15: lambda b: run_single_game(b, "nostalgic memory", "#Nostalgia"),
         17: lambda b: run_single_game(b, "trivia", "#FunFact"),
         18: run_rivalry
     }
-    if slot_id in handlers: handlers[slot_id](bsky)
+    
+    if slot_id in handlers: 
+        handlers[slot_id](bsky)
+    else:
+        logger.error(f"❌ No handler for Slot {slot_id}")
+        
     logger.info("--- 🏁 BOT RUN FINISHED ---")
 
 if __name__ == "__main__": main()
