@@ -44,7 +44,6 @@ RETRO_PLATFORMS = {
 RETRO_IDS_STR = ",".join(map(str, RETRO_PLATFORMS.keys()))
 GENRES = {"Platformer": 83, "Shooter": 2, "RPG": 5, "Fighting": 6, "Racing": 1}
 
-# Full 3-post-per-day schedule (21 unique slots)
 SCHEDULE = {
     0: {9: 1, 15: 2, 21: 13}, 1: {9: 9, 15: 3, 21: 14}, 2: {9: 4, 15: 17, 21: 13},
     3: {9: 6, 15: 18, 21: 14}, 4: {9: 9, 15: 8, 21: 13}, 5: {9: 9, 15: 10, 21: 15},
@@ -94,18 +93,20 @@ def create_collage(images):
     for i in resized: collage.paste(i, (x,0)); x += i.width
     return collage
 
-def clean_game_hashtag(game_name, existing_tags):
+def clean_game_hashtag(game_name, current_tags):
+    # Rule: Check Franchise Map first
     upper = game_name.upper()
     for k, v in FRANCHISE_MAP.items():
         if k in upper: return v
     
+    # Rule: Clean standard name
     clean = re.sub(r'[^a-zA-Z0-9]', '', "".join(game_name.split(':')[0].split('-')[0].split()[:2]))
     tag = f"#{clean}"
     
-    # Logic: Skip if > 20 chars, replace with #Nostalgia if not already present
-    if len(tag) > 20:
-        return "#Nostalgia" if "#Nostalgia" not in existing_tags else None
-    return tag if len(clean) > 2 else None
+    # Rule: Skip if > 20 chars, substitute with #Nostalgia
+    if len(tag) > 20 or len(clean) < 2:
+        return "#Nostalgia" if "#Nostalgia" not in current_tags else None
+    return tag
 
 def get_platform_tags(game_data):
     found = []
@@ -126,7 +127,9 @@ def fetch_games_list(count=1, genre_id=None, dates=None):
         results = resp.get('results', [])
         history = load_json('history_games.json', [])
         available = [g for g in results if g['id'] not in history]
-        return random.sample(available, min(len(available), count)) if available else random.sample(results, min(len(results), count))
+        # Avoid total failure if everything is in history
+        if not available: available = results
+        return random.sample(available, min(len(available), count))
     except: return []
 
 def deep_fetch_game(game_id):
@@ -143,35 +146,34 @@ def run_rivalry(bsky):
     
     g1, g2 = deep_fetch_game(games_basic[0]['id']), deep_fetch_game(games_basic[1]['id'])
     
-    p = (f"Compare '{g1['name']}' and '{g2['name']}' ({g_name}). Focus on why fans loved one over the other. "
-         f"Ask a question to settle the debate. Keep under 120 chars. No hashtags.")
+    p = (f"Compare '{g1['name']}' and '{g2['name']}' ({g_name}). Briefly explain the rivalry or difference. "
+         f"Ask followers to pick a side. Limit 120 chars. No hashtags.")
     
     msg = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY).messages.create(
         model="claude-3-haiku-20240307", max_tokens=200, messages=[{"role": "user", "content": p}]
     )
-    text = msg.content[0].text.strip()
+    text = msg.content[0].text.strip().replace('"', '')
     
     tb = client_utils.TextBuilder()
     tb.text(f"{text}\n\n")
     
-    # Dynamic Hashtags
     tags = ["#Retro", "#RetroGaming", "#Rivalry"]
-    t1 = clean_game_hashtag(g1['name'], tags)
-    if t1: tags.append(t1)
-    t2 = clean_game_hashtag(g2['name'], tags)
-    if t2: tags.append(t2)
+    for g in [g1, g2]:
+        t = clean_game_hashtag(g['name'], tags)
+        if t: tags.append(t)
     
-    tags = list(set(tags))
-    for i, t in enumerate(tags):
+    # Preserving order while deduplicating
+    unique_tags = list(dict.fromkeys(tags))
+    for i, t in enumerate(unique_tags):
         tb.tag(t, t.replace("#", ""))
-        if i < len(tags)-1: tb.text(" ")
+        if i < len(unique_tags)-1: tb.text(" ")
 
     imgs = []
     c1, c2 = download_image(g1.get('background_image')), download_image(g2.get('background_image'))
     if c1 and c2: imgs.append(create_collage([c1, c2]))
     
-    # Randomly sample from screenshots 5-10 if possible
-    all_shots = g1.get('short_screenshots', []) + g2.get('short_screenshots', [])
+    # Sampling from 10 screenshots
+    all_shots = g1.get('short_screenshots', [])[1:6] + g2.get('short_screenshots', [])[1:6]
     random.shuffle(all_shots)
     for shot in all_shots:
         if len(imgs) >= 3: break
@@ -186,42 +188,37 @@ def run_rivalry(bsky):
 
 def run_single_game(bsky, theme, slot_tag, force_on_this_day=False):
     game = None
-    custom_header = ""
+    header = ""
+    now = datetime.now()
     
     if force_on_this_day:
-        now = datetime.now()
-        # Attempt exact day check first with random retro years
         for _ in range(5):
-            year = random.randint(1985, 2005)
-            date_str = f"{year}-{now.strftime('%m-%d')}"
-            results = fetch_games_list(count=1, dates=f"{date_str},{date_str}")
-            if results: 
-                game = results[0]
-                custom_header = f"📅 On This Day in {year}\n\n"
+            yr = random.randint(1985, 2005)
+            d_str = f"{yr}-{now.strftime('%m-%d')}"
+            res = fetch_games_list(count=1, dates=f"{d_str},{d_str}")
+            if res:
+                game = res[0]
+                header = f"📅 On This Day in {yr}\n\n"
                 break
-        # Fallback to current month if no exact day match found
         if not game:
-            month_start = now.strftime('%Y-%m-01')
-            month_end = now.strftime('%Y-%m-31') # RAWG handles 31 safely
-            results = fetch_games_list(count=1, dates=f"1985-01-01,2005-12-31") # Broad retro range
-            if results:
-                game = results[0]
-                rel = game.get('released', 'N/A')
-                month_name = now.strftime('%B')
-                year_rel = rel.split('-')[0] if '-' in rel else "the past"
-                custom_header = f"🗓️ In {month_name}, {year_rel}\n\n"
+            m_name = now.strftime('%B')
+            yr_fallback = random.randint(1985, 2005)
+            res = fetch_games_list(count=1, dates=f"{yr_fallback}-{now.strftime('%m')}-01,{yr_fallback}-{now.strftime('%m')}-28")
+            if res:
+                game = res[0]
+                header = f"🗓️ In {m_name}, {yr_fallback}\n\n"
 
     if not game:
-        results = fetch_games_list(count=1)
-        game = results[0] if results else None
+        res = fetch_games_list(count=1)
+        game = res[0] if res else None
     
     if not game: return
     full = deep_fetch_game(game['id'])
-    name, r_date = full['name'], full.get('released', 'N/A')
+    name = full['name']
     
-    p = (f"Write a {theme} post about '{name}' on {full.get('platforms', [{}])[0].get('platform', {}).get('name')}. "
-         f"Released: {r_date}. Focus on why it matters. MANDATORY: End with a question. "
-         f"Under 110 chars. No hashtags. SAFETY: If obscure, talk about {full.get('genres', [{}])[0].get('name')} era.")
+    p = (f"Write a {theme} post about '{name}' ({full.get('released', 'N/A')}). "
+         f"Include a question for engagement. Max 110 chars. No hashtags. "
+         f"Safety: If unfamiliar, focus on the {full.get('genres', [{}])[0].get('name', 'Retro')} era.")
     
     msg = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY).messages.create(
         model="claude-3-haiku-20240307", max_tokens=150, messages=[{"role": "user", "content": p}]
@@ -229,22 +226,21 @@ def run_single_game(bsky, theme, slot_tag, force_on_this_day=False):
     text = msg.content[0].text.strip().replace('"', '')
 
     tb = client_utils.TextBuilder()
-    tb.text(f"{custom_header}{text}\n\n")
+    tb.text(f"{header}{text}\n\n")
     
     tags = ["#Retro", "#RetroGaming", slot_tag] + get_platform_tags(full)
-    game_tag = clean_game_hashtag(name, tags)
-    if game_tag: tags.append(game_tag)
+    gtag = clean_game_hashtag(name, tags)
+    if gtag: tags.append(gtag)
     
-    tags = list(set(tags))
-    for i, t in enumerate(tags):
+    unique_tags = list(dict.fromkeys(tags))
+    for i, t in enumerate(unique_tags):
         tb.tag(t, t.replace("#", ""))
-        if i < len(tags)-1: tb.text(" ")
+        if i < len(unique_tags)-1: tb.text(" ")
 
     imgs = []
     bg = download_image(full.get('background_image'))
     if bg: imgs.append(bg)
     
-    # Pick 2-3 random screenshots from the first 10
     shots = full.get('short_screenshots', [])[1:11]
     if shots:
         selected = random.sample(shots, min(len(shots), 2))
@@ -265,11 +261,18 @@ def main():
         bsky = Client(); bsky.login(BSKY_HANDLE, BSKY_PASSWORD)
     except: logger.error("Auth Fail"); return
 
-    f = os.environ.get("FORCED_SLOT", ""); man = os.environ.get("IS_MANUAL") == "true"; now = datetime.utcnow()
-    slot_id = int(re.search(r'Slot\s*(\d+)', f).group(1)) if man else SCHEDULE.get(now.weekday(), {}).get(now.hour)
+    f = os.environ.get("FORCED_SLOT", "")
+    man = os.environ.get("IS_MANUAL") == "true"
+    now = datetime.utcnow()
+    
+    slot_id = None
+    if man and "Slot" in f:
+        slot_id = int(re.search(r'Slot\s*(\d+)', f).group(1))
+    else:
+        slot_id = SCHEDULE.get(now.weekday(), {}).get(now.hour)
     
     if not slot_id:
-        logger.info("No slot scheduled for this hour.")
+        logger.info("No slot scheduled.")
         return
 
     handlers = {
@@ -291,7 +294,6 @@ def main():
     
     if slot_id in handlers:
         handlers[slot_id](bsky)
-    
     logger.info("--- 🏁 END ---")
 
 if __name__ == "__main__":
