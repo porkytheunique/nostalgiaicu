@@ -13,15 +13,14 @@ on:
         type: choice
         options:
           - 'Auto-Detect (Run standard daily schedule)'
-          - 'Slot 1: Feature Ad (Website Promo)'
-          - 'Slot 2: Generic Question (Nostalgia)'
+          - 'Slot 1: Nostalgic Memory'
           - 'Slot 3: Rivalry Collage (Versus)'
-          - 'Slot 4: Unpopular Opinion (Controversial)'
-          - 'Slot 6: Obscure/Hidden Gem (Rare)'
-          - 'Slot 7: Starter Pack Collage (Elimination)'
-          - 'Slot 9: Aesthetic/Art (Pixel Art)'
-          - 'Slot 11: Memory Question (Childhood)'
-          - 'Slot 13: On This Day / History'
+          - 'Slot 4: Unpopular Opinion'
+          - 'Slot 6: Hidden Gem'
+          - 'Slot 8: Developer Tribute'
+          - 'Slot 9: Historical Fact'
+          - 'Slot 10: Box Art Appreciation'
+          - 'Slot 13: On This Day Anniversary'
 
 jobs:
   run-bot:
@@ -32,6 +31,8 @@ jobs:
     steps:
     - name: Checkout code
       uses: actions/checkout@v3
+      with:
+        fetch-depth: 0 # Ensures we can push back to the repo
 
     - name: Set up Python
       uses: actions/setup-python@v4
@@ -41,7 +42,6 @@ jobs:
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
         pip install requests atproto anthropic Pillow
 
     - name: Run Bot Script
@@ -50,7 +50,7 @@ jobs:
         ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         BLUESKY_HANDLE: ${{ secrets.BLUESKY_HANDLE }}
         BLUESKY_PASSWORD: ${{ secrets.BLUESKY_PASSWORD }}
-        FORCED_SLOT: ${{ inputs.force_slot }}
+        FORCED_SLOT: ${{ github.event.inputs.force_slot }}
         IS_MANUAL: ${{ github.event_name == 'workflow_dispatch' }}
       run: python post_generator.py
 
@@ -58,5 +58,6 @@ jobs:
       run: |
         git config --global user.name "RetroBot-Action"
         git config --global user.email "bot@nostalgia.icu"
+        git pull origin main # Pull latest changes before pushing
         git add *.json
         git diff --quiet && git diff --staged --quiet || (git commit -m "Update bot history [skip ci]" && git push)
