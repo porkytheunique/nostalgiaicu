@@ -94,16 +94,11 @@ def create_collage(images):
     return collage
 
 def clean_game_hashtag(game_name, current_tags):
-    # Rule: Check Franchise Map first
     upper = game_name.upper()
     for k, v in FRANCHISE_MAP.items():
         if k in upper: return v
-    
-    # Rule: Clean standard name
     clean = re.sub(r'[^a-zA-Z0-9]', '', "".join(game_name.split(':')[0].split('-')[0].split()[:2]))
     tag = f"#{clean}"
-    
-    # Rule: Skip if > 20 chars, substitute with #Nostalgia
     if len(tag) > 20 or len(clean) < 2:
         return "#Nostalgia" if "#Nostalgia" not in current_tags else None
     return tag
@@ -127,7 +122,6 @@ def fetch_games_list(count=1, genre_id=None, dates=None):
         results = resp.get('results', [])
         history = load_json('history_games.json', [])
         available = [g for g in results if g['id'] not in history]
-        # Avoid total failure if everything is in history
         if not available: available = results
         return random.sample(available, min(len(available), count))
     except: return []
@@ -143,136 +137,108 @@ def run_rivalry(bsky):
     g_name, g_id = random.choice(list(GENRES.items()))
     games_basic = fetch_games_list(count=2, genre_id=g_id)
     if len(games_basic) < 2: return
-    
     g1, g2 = deep_fetch_game(games_basic[0]['id']), deep_fetch_game(games_basic[1]['id'])
-    
     p = (f"Compare '{g1['name']}' and '{g2['name']}' ({g_name}). Briefly explain the rivalry or difference. "
          f"Ask followers to pick a side. Limit 120 chars. No hashtags.")
-    
     msg = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY).messages.create(
         model="claude-3-haiku-20240307", max_tokens=200, messages=[{"role": "user", "content": p}]
     )
     text = msg.content[0].text.strip().replace('"', '')
-    
     tb = client_utils.TextBuilder()
     tb.text(f"{text}\n\n")
-    
     tags = ["#Retro", "#RetroGaming", "#Rivalry"]
     for g in [g1, g2]:
         t = clean_game_hashtag(g['name'], tags)
         if t: tags.append(t)
-    
-    # Preserving order while deduplicating
     unique_tags = list(dict.fromkeys(tags))
     for i, t in enumerate(unique_tags):
         tb.tag(t, t.replace("#", ""))
         if i < len(unique_tags)-1: tb.text(" ")
-
     imgs = []
     c1, c2 = download_image(g1.get('background_image')), download_image(g2.get('background_image'))
     if c1 and c2: imgs.append(create_collage([c1, c2]))
-    
-    # Sampling from 10 screenshots
     all_shots = g1.get('short_screenshots', [])[1:6] + g2.get('short_screenshots', [])[1:6]
     random.shuffle(all_shots)
     for shot in all_shots:
         if len(imgs) >= 3: break
         img = download_image(shot['image'])
         if img: imgs.append(img)
-
     if os.path.exists("images/promo_ad.jpg"):
         with Image.open("images/promo_ad.jpg") as ad: imgs.append(ad.copy())
-
     blobs = [models.AppBskyEmbedImages.Image(alt="Versus", image=bsky.upload_blob(image_to_bytes(i)).blob) for i in imgs[:4]]
     bsky.send_post(tb, embed=models.AppBskyEmbedImages.Main(images=blobs))
 
 def run_single_game(bsky, theme, slot_tag, force_on_this_day=False):
-    game = None
-    header = ""
-    now = datetime.now()
-    
+    game, header, now = None, "", datetime.now()
     if force_on_this_day:
         for _ in range(5):
             yr = random.randint(1985, 2005)
             d_str = f"{yr}-{now.strftime('%m-%d')}"
             res = fetch_games_list(count=1, dates=f"{d_str},{d_str}")
             if res:
-                game = res[0]
-                header = f"📅 On This Day in {yr}\n\n"
+                game, header = res[0], f"📅 On This Day in {yr}\n\n"
                 break
         if not game:
-            m_name = now.strftime('%B')
-            yr_fallback = random.randint(1985, 2005)
+            m_name, yr_fallback = now.strftime('%B'), random.randint(1985, 2005)
             res = fetch_games_list(count=1, dates=f"{yr_fallback}-{now.strftime('%m')}-01,{yr_fallback}-{now.strftime('%m')}-28")
-            if res:
-                game = res[0]
-                header = f"🗓️ In {m_name}, {yr_fallback}\n\n"
-
+            if res: game, header = res[0], f"🗓️ In {m_name}, {yr_fallback}\n\n"
     if not game:
         res = fetch_games_list(count=1)
         game = res[0] if res else None
-    
     if not game: return
     full = deep_fetch_game(game['id'])
-    name = full['name']
-    
-    p = (f"Write a {theme} post about '{name}' ({full.get('released', 'N/A')}). "
+    p = (f"Write a {theme} post about '{full['name']}' ({full.get('released', 'N/A')}). "
          f"Include a question for engagement. Max 110 chars. No hashtags. "
          f"Safety: If unfamiliar, focus on the {full.get('genres', [{}])[0].get('name', 'Retro')} era.")
-    
     msg = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY).messages.create(
         model="claude-3-haiku-20240307", max_tokens=150, messages=[{"role": "user", "content": p}]
     )
     text = msg.content[0].text.strip().replace('"', '')
-
     tb = client_utils.TextBuilder()
     tb.text(f"{header}{text}\n\n")
-    
     tags = ["#Retro", "#RetroGaming", slot_tag] + get_platform_tags(full)
-    gtag = clean_game_hashtag(name, tags)
+    gtag = clean_game_hashtag(full['name'], tags)
     if gtag: tags.append(gtag)
-    
     unique_tags = list(dict.fromkeys(tags))
     for i, t in enumerate(unique_tags):
         tb.tag(t, t.replace("#", ""))
         if i < len(unique_tags)-1: tb.text(" ")
-
-    imgs = []
-    bg = download_image(full.get('background_image'))
-    if bg: imgs.append(bg)
-    
+    imgs = [download_image(full.get('background_image'))] if full.get('background_image') else []
     shots = full.get('short_screenshots', [])[1:11]
     if shots:
         selected = random.sample(shots, min(len(shots), 2))
         for s in selected:
             s_img = download_image(s['image'])
             if s_img: imgs.append(s_img)
-            
     if os.path.exists("images/promo_ad.jpg"):
         with Image.open("images/promo_ad.jpg") as ad: imgs.append(ad.copy())
-
-    blobs = [models.AppBskyEmbedImages.Image(alt=name, image=bsky.upload_blob(image_to_bytes(i)).blob) for i in imgs[:4]]
+    blobs = [models.AppBskyEmbedImages.Image(alt=full['name'], image=bsky.upload_blob(image_to_bytes(i)).blob) for i in imgs[:4] if i]
     bsky.send_post(tb, embed=models.AppBskyEmbedImages.Main(images=blobs))
     save_json('history_games.json', (load_json('history_games.json', []) + [full['id']])[-2000:])
 
 def main():
     logger.info("--- 🚀 START ---")
     try:
-        bsky = Client(); bsky.login(BSKY_HANDLE, BSKY_PASSWORD)
-    except: logger.error("Auth Fail"); return
+        bsky = Client()
+        bsky.login(BSKY_HANDLE, BSKY_PASSWORD)
+    except Exception as e:
+        logger.error(f"Auth Fail: {e}") # This now prints the REAL error
+        return
 
     f = os.environ.get("FORCED_SLOT", "")
     man = os.environ.get("IS_MANUAL") == "true"
     now = datetime.utcnow()
     
     slot_id = None
-    if man and "Slot" in f:
-        slot_id = int(re.search(r'Slot\s*(\d+)', f).group(1))
-    else:
+    if man and f and "Slot" in f:
+        match = re.search(r'Slot\s*(\d+)', f)
+        if match: slot_id = int(match.group(1))
+    
+    if slot_id is None:
         slot_id = SCHEDULE.get(now.weekday(), {}).get(now.hour)
     
     if not slot_id:
-        logger.info("No slot scheduled.")
+        logger.info(f"No slot for Hour: {now.hour}, Day: {now.weekday()}")
         return
 
     handlers = {
@@ -293,6 +259,7 @@ def main():
     }
     
     if slot_id in handlers:
+        logger.info(f"Executing Slot {slot_id}")
         handlers[slot_id](bsky)
     logger.info("--- 🏁 END ---")
 
