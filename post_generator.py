@@ -19,12 +19,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger()
 
-# --- CONFIGURATION ---
-RAWG_API_KEY = os.environ.get("RAWG_API_KEY")
-ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY")
-BSKY_HANDLE = os.environ.get("BLUESKY_HANDLE")
-BSKY_PASSWORD = os.environ.get("BSKY_PASSWORD")
-
+# --- CONSTANTS ---
 FRANCHISE_MAP = {
     "ZELDA": "#LegendOfZelda", "MARIO": "#SuperMario", "METROID": "#Metroid",
     "SONIC": "#SonicTheHedgehog", "FINAL FANTASY": "#FinalFantasy",
@@ -56,15 +51,13 @@ def load_json(filename, default):
     try:
         if os.path.exists(filename):
             with open(filename, 'r') as f: return json.load(f)
-    except Exception as e:
-        logger.error(f"Failed to load {filename}: {e}")
+    except: pass
     return default
 
 def save_json(filename, data):
     try:
         with open(filename, 'w') as f: json.dump(data, f)
-    except Exception as e:
-        logger.error(f"Failed to save {filename}: {e}")
+    except: pass
 
 def download_image(url):
     try:
@@ -113,8 +106,8 @@ def get_platform_tags(game_data):
             break
     return found[:1] if found else ["#RetroGaming"]
 
-def fetch_games_list(count=1, genre_id=None, dates=None):
-    url = f"https://api.rawg.io/api/games?key={RAWG_API_KEY}&platforms={RETRO_IDS_STR}&page_size=40"
+def fetch_games_list(api_key, count=1, genre_id=None, dates=None):
+    url = f"https://api.rawg.io/api/games?key={api_key}&platforms={RETRO_IDS_STR}&page_size=40"
     if genre_id: url += f"&genres={genre_id}"
     if dates: url += f"&dates={dates}"
     try:
@@ -126,21 +119,23 @@ def fetch_games_list(count=1, genre_id=None, dates=None):
         return random.sample(available, min(len(available), count))
     except: return []
 
-def deep_fetch_game(game_id):
-    url = f"https://api.rawg.io/api/games/{game_id}?key={RAWG_API_KEY}"
+def deep_fetch_game(api_key, game_id):
+    url = f"https://api.rawg.io/api/games/{game_id}?key={api_key}"
     try: return requests.get(url, timeout=10).json()
     except: return None
 
 # --- CORE HANDLERS ---
 
-def run_rivalry(bsky):
+def run_rivalry(bsky, api_key, anthropic_key):
     g_name, g_id = random.choice(list(GENRES.items()))
-    games_basic = fetch_games_list(count=2, genre_id=g_id)
+    games_basic = fetch_games_list(api_key, count=2, genre_id=g_id)
     if len(games_basic) < 2: return
-    g1, g2 = deep_fetch_game(games_basic[0]['id']), deep_fetch_game(games_basic[1]['id'])
+    g1, g2 = deep_fetch_game(api_key, games_basic[0]['id']), deep_fetch_game(api_key, games_basic[1]['id'])
+    
     p = (f"Compare '{g1['name']}' and '{g2['name']}' ({g_name}). Briefly explain the rivalry or difference. "
          f"Ask followers to pick a side. Limit 120 chars. No hashtags.")
-    msg = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY).messages.create(
+    
+    msg = anthropic.Anthropic(api_key=anthropic_key).messages.create(
         model="claude-3-haiku-20240307", max_tokens=200, messages=[{"role": "user", "content": p}]
     )
     text = msg.content[0].text.strip().replace('"', '')
@@ -168,29 +163,32 @@ def run_rivalry(bsky):
     blobs = [models.AppBskyEmbedImages.Image(alt="Versus", image=bsky.upload_blob(image_to_bytes(i)).blob) for i in imgs[:4]]
     bsky.send_post(tb, embed=models.AppBskyEmbedImages.Main(images=blobs))
 
-def run_single_game(bsky, theme, slot_tag, force_on_this_day=False):
+def run_single_game(bsky, api_key, anthropic_key, theme, slot_tag, force_on_this_day=False):
     game, header, now = None, "", datetime.now()
     if force_on_this_day:
         for _ in range(5):
             yr = random.randint(1985, 2005)
             d_str = f"{yr}-{now.strftime('%m-%d')}"
-            res = fetch_games_list(count=1, dates=f"{d_str},{d_str}")
+            res = fetch_games_list(api_key, count=1, dates=f"{d_str},{d_str}")
             if res:
                 game, header = res[0], f"📅 On This Day in {yr}\n\n"
                 break
         if not game:
             m_name, yr_fallback = now.strftime('%B'), random.randint(1985, 2005)
-            res = fetch_games_list(count=1, dates=f"{yr_fallback}-{now.strftime('%m')}-01,{yr_fallback}-{now.strftime('%m')}-28")
+            res = fetch_games_list(api_key, count=1, dates=f"{yr_fallback}-{now.strftime('%m')}-01,{yr_fallback}-{now.strftime('%m')}-28")
             if res: game, header = res[0], f"🗓️ In {m_name}, {yr_fallback}\n\n"
+    
     if not game:
-        res = fetch_games_list(count=1)
+        res = fetch_games_list(api_key, count=1)
         game = res[0] if res else None
+    
     if not game: return
-    full = deep_fetch_game(game['id'])
+    full = deep_fetch_game(api_key, game['id'])
     p = (f"Write a {theme} post about '{full['name']}' ({full.get('released', 'N/A')}). "
          f"Include a question for engagement. Max 110 chars. No hashtags. "
          f"Safety: If unfamiliar, focus on the {full.get('genres', [{}])[0].get('name', 'Retro')} era.")
-    msg = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY).messages.create(
+    
+    msg = anthropic.Anthropic(api_key=anthropic_key).messages.create(
         model="claude-3-haiku-20240307", max_tokens=150, messages=[{"role": "user", "content": p}]
     )
     text = msg.content[0].text.strip().replace('"', '')
@@ -219,21 +217,24 @@ def run_single_game(bsky, theme, slot_tag, force_on_this_day=False):
 def main():
     logger.info("--- 🚀 START ---")
     
-    # Debug print (will show MISSING if the YAML failed to pass it)
-    if not BSKY_HANDLE or not BSKY_PASSWORD:
-        logger.error(f"Credentials Check -> Handle: {'OK' if BSKY_HANDLE else 'MISSING'}, Pwd: {'OK' if BSKY_PASSWORD else 'MISSING'}")
+    # LOAD ENVIRONMENT VARIABLES INSIDE MAIN
+    rawg_key = os.environ.get("RAWG_API_KEY")
+    anthropic_key = os.environ.get("ANTHROPIC_API_KEY")
+    handle = os.environ.get("BLUESKY_HANDLE")
+    password = os.environ.get("BLUESKY_PASSWORD")
+
+    if not handle or not password:
+        logger.error(f"Credentials Check -> Handle: {'OK' if handle else 'MISSING'}, Pwd: {'OK' if password else 'MISSING'}")
         return
 
-    # Login Logic
     try:
         bsky = Client()
-        bsky.login(BSKY_HANDLE, BSKY_PASSWORD)
+        bsky.login(handle, password)
         logger.info("Login Successful")
     except Exception as e:
         logger.error(f"Bluesky Login Error: {e}")
         return
 
-    # Slot Detection Logic
     f = os.environ.get("FORCED_SLOT", "")
     man = os.environ.get("IS_MANUAL") == "true"
     now = datetime.utcnow()
@@ -252,22 +253,22 @@ def main():
         logger.info(f"No slot scheduled for Hour {now.hour}")
         return
 
-    # Handlers Mapping
     handlers = {
-        1: lambda b: run_single_game(b, "nostalgic memory", "#Nostalgia"),
-        9: lambda b: run_single_game(b, "cool historical fact", "#RetroGaming"),
-        4: lambda b: run_single_game(b, "unpopular opinion", "#UnpopularOpinion"),
-        6: lambda b: run_single_game(b, "hidden gem", "#HiddenGem"),
-        11: lambda b: run_single_game(b, "relaxing weekend morning", "#RetroGaming"),
-        2: lambda b: run_single_game(b, "quick spotlight", "#ClassicGaming"),
-        3: run_rivalry, 18: run_rivalry,
-        17: lambda b: run_single_game(b, "gameplay mechanics deep dive", "#RetroGaming"),
-        8: lambda b: run_single_game(b, "tribute to the developers", "#RetroDev"),
-        10: lambda b: run_single_game(b, "visual style and art direction", "#BoxArt"),
-        12: lambda b: run_single_game(b, "Sunday afternoon playthrough", "#RetroGaming"),
-        13: lambda b: run_single_game(b, "anniversary", "#OnThisDay", True),
-        14: lambda b: run_single_game(b, "legacy and impact", "#OnThisDay", True),
-        15: lambda b: run_single_game(b, "historical release context", "#OnThisDay", True)
+        1: lambda b: run_single_game(b, rawg_key, anthropic_key, "nostalgic memory", "#Nostalgia"),
+        9: lambda b: run_single_game(b, rawg_key, anthropic_key, "cool historical fact", "#RetroGaming"),
+        4: lambda b: run_single_game(b, rawg_key, anthropic_key, "unpopular opinion", "#UnpopularOpinion"),
+        6: lambda b: run_single_game(b, rawg_key, anthropic_key, "hidden gem", "#HiddenGem"),
+        11: lambda b: run_single_game(b, rawg_key, anthropic_key, "relaxing weekend morning", "#RetroGaming"),
+        2: lambda b: run_single_game(b, rawg_key, anthropic_key, "quick spotlight", "#ClassicGaming"),
+        3: lambda b: run_rivalry(b, rawg_key, anthropic_key),
+        18: lambda b: run_rivalry(b, rawg_key, anthropic_key),
+        17: lambda b: run_single_game(b, rawg_key, anthropic_key, "gameplay mechanics deep dive", "#RetroGaming"),
+        8: lambda b: run_single_game(b, rawg_key, anthropic_key, "tribute to the developers", "#RetroDev"),
+        10: lambda b: run_single_game(b, rawg_key, anthropic_key, "visual style and art direction", "#BoxArt"),
+        12: lambda b: run_single_game(b, rawg_key, anthropic_key, "Sunday afternoon playthrough", "#RetroGaming"),
+        13: lambda b: run_single_game(b, rawg_key, anthropic_key, "anniversary", "#OnThisDay", True),
+        14: lambda b: run_single_game(b, rawg_key, anthropic_key, "legacy and impact", "#OnThisDay", True),
+        15: lambda b: run_single_game(b, rawg_key, anthropic_key, "historical release context", "#OnThisDay", True)
     }
     
     if slot_id in handlers:
