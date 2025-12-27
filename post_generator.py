@@ -219,19 +219,21 @@ def run_single_game(bsky, theme, slot_tag, force_on_this_day=False):
 def main():
     logger.info("--- 🚀 START ---")
     
-    # Pre-flight check to debug empty secrets
+    # Debug print (will show MISSING if the YAML failed to pass it)
     if not BSKY_HANDLE or not BSKY_PASSWORD:
-        logger.error(f"Missing Credentials! Handle: {'Found' if BSKY_HANDLE else 'MISSING'}, Pwd: {'Found' if BSKY_PASSWORD else 'MISSING'}")
+        logger.error(f"Credentials Check -> Handle: {'OK' if BSKY_HANDLE else 'MISSING'}, Pwd: {'OK' if BSKY_PASSWORD else 'MISSING'}")
         return
 
+    # Login Logic
     try:
         bsky = Client()
         bsky.login(BSKY_HANDLE, BSKY_PASSWORD)
+        logger.info("Login Successful")
     except Exception as e:
-        logger.error(f"Auth Fail: {e}")
+        logger.error(f"Bluesky Login Error: {e}")
         return
 
-    # Improved logic for manual slot detection
+    # Slot Detection Logic
     f = os.environ.get("FORCED_SLOT", "")
     man = os.environ.get("IS_MANUAL") == "true"
     now = datetime.utcnow()
@@ -241,15 +243,16 @@ def main():
         match = re.search(r'Slot\s*(\d+)', f)
         if match: 
             slot_id = int(match.group(1))
-            logger.info(f"Manual override detected: Slot {slot_id}")
+            logger.info(f"Manual Override: Executing Slot {slot_id}")
     
     if slot_id is None:
         slot_id = SCHEDULE.get(now.weekday(), {}).get(now.hour)
     
     if not slot_id:
-        logger.info(f"No slot scheduled for Day {now.weekday()} Hour {now.hour}")
+        logger.info(f"No slot scheduled for Hour {now.hour}")
         return
 
+    # Handlers Mapping
     handlers = {
         1: lambda b: run_single_game(b, "nostalgic memory", "#Nostalgia"),
         9: lambda b: run_single_game(b, "cool historical fact", "#RetroGaming"),
