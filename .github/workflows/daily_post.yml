@@ -49,7 +49,7 @@ jobs:
         ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         BLUESKY_HANDLE: ${{ secrets.BLUESKY_HANDLE }}
         BLUESKY_PASSWORD: ${{ secrets.BLUESKY_PASSWORD }}
-        FORCED_SLOT: ${{ inputs.force_slot }}
+        FORCED_SLOT: ${{ github.event.inputs.force_slot }}
         IS_MANUAL: ${{ github.event_name == 'workflow_dispatch' }}
       run: python post_generator.py
 
