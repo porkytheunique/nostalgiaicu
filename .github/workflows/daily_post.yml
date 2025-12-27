@@ -2,25 +2,24 @@ name: Daily Retro Bot Post
 
 on:
   schedule:
-    # Runs at 09:00, 15:00, and 21:00 UTC every day
     - cron: '0 9,15,21 * * *'
   workflow_dispatch: 
     inputs:
       force_slot:
-        description: 'Choose a post type to run manually:'
+        description: 'Choose a post type:'
         required: true
-        default: 'Auto-Detect (Run standard daily schedule)'
+        default: 'Auto-Detect'
         type: choice
         options:
-          - 'Auto-Detect (Run standard daily schedule)'
+          - 'Auto-Detect'
           - 'Slot 1: Nostalgic Memory'
-          - 'Slot 3: Rivalry Collage (Versus)'
+          - 'Slot 3: Rivalry Collage'
           - 'Slot 4: Unpopular Opinion'
           - 'Slot 6: Hidden Gem'
           - 'Slot 8: Developer Tribute'
           - 'Slot 9: Historical Fact'
           - 'Slot 10: Box Art Appreciation'
-          - 'Slot 13: On This Day Anniversary'
+          - 'Slot 13: On This Day'
 
 jobs:
   run-bot:
@@ -32,7 +31,7 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v3
       with:
-        fetch-depth: 0 # Ensures we can push back to the repo
+        fetch-depth: 0
 
     - name: Set up Python
       uses: actions/setup-python@v4
@@ -50,14 +49,14 @@ jobs:
         ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         BLUESKY_HANDLE: ${{ secrets.BLUESKY_HANDLE }}
         BLUESKY_PASSWORD: ${{ secrets.BLUESKY_PASSWORD }}
-        FORCED_SLOT: ${{ github.event.inputs.force_slot }}
+        FORCED_SLOT: ${{ inputs.force_slot }}
         IS_MANUAL: ${{ github.event_name == 'workflow_dispatch' }}
       run: python post_generator.py
 
-    - name: Commit and Push Changes (JSON DB)
+    - name: Commit and Push Changes
       run: |
         git config --global user.name "RetroBot-Action"
         git config --global user.email "bot@nostalgia.icu"
-        git pull origin main # Pull latest changes before pushing
+        git pull origin main --rebase
         git add *.json
-        git diff --quiet && git diff --staged --quiet || (git commit -m "Update bot history [skip ci]" && git push)
+        git diff --quiet && git diff --staged --quiet || (git commit -m "Update history [skip ci]" && git push)
