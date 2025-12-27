@@ -149,18 +149,31 @@ def run_rivalry(bsky, api_key, anthropic_key):
     for i, t in enumerate(unique_tags):
         tb.tag(t, t.replace("#", ""))
         if i < len(unique_tags)-1: tb.text(" ")
-    imgs = []
+    
+    # --- Image Logic for Rivalry ---
+    final_imgs = []
+    
+    # 1. Versus Collage
     c1, c2 = download_image(g1.get('background_image')), download_image(g2.get('background_image'))
-    if c1 and c2: imgs.append(create_collage([c1, c2]))
-    all_shots = g1.get('short_screenshots', [])[1:6] + g2.get('short_screenshots', [])[1:6]
-    random.shuffle(all_shots)
-    for shot in all_shots:
-        if len(imgs) >= 3: break
-        img = download_image(shot['image'])
-        if img: imgs.append(img)
+    if c1 and c2: final_imgs.append(create_collage([c1, c2]))
+    
+    # 2. Game 1 Screenshot
+    s1_list = g1.get('short_screenshots', [])[1:11]
+    if s1_list:
+        img1 = download_image(random.choice(s1_list)['image'])
+        if img1: final_imgs.append(img1)
+        
+    # 3. Game 2 Screenshot
+    s2_list = g2.get('short_screenshots', [])[1:11]
+    if s2_list:
+        img2 = download_image(random.choice(s2_list)['image'])
+        if img2: final_imgs.append(img2)
+
+    # 4. Promo Ad
     if os.path.exists("images/promo_ad.jpg"):
-        with Image.open("images/promo_ad.jpg") as ad: imgs.append(ad.copy())
-    blobs = [models.AppBskyEmbedImages.Image(alt="Versus", image=bsky.upload_blob(image_to_bytes(i)).blob) for i in imgs[:4]]
+        with Image.open("images/promo_ad.jpg") as ad: final_imgs.append(ad.copy())
+
+    blobs = [models.AppBskyEmbedImages.Image(alt="Rivalry", image=bsky.upload_blob(image_to_bytes(i)).blob) for i in final_imgs[:4]]
     bsky.send_post(tb, embed=models.AppBskyEmbedImages.Main(images=blobs))
 
 def run_single_game(bsky, api_key, anthropic_key, theme, slot_tag, force_on_this_day=False):
@@ -201,23 +214,32 @@ def run_single_game(bsky, api_key, anthropic_key, theme, slot_tag, force_on_this
     for i, t in enumerate(unique_tags):
         tb.tag(t, t.replace("#", ""))
         if i < len(unique_tags)-1: tb.text(" ")
-    imgs = [download_image(full.get('background_image'))] if full.get('background_image') else []
+        
+    # --- Image Logic for Single Game ---
+    final_imgs = []
+    
+    # 1. Background
+    bg = download_image(full.get('background_image'))
+    if bg: final_imgs.append(bg)
+    
+    # 2 & 3. Random Screenshots
     shots = full.get('short_screenshots', [])[1:11]
     if shots:
         selected = random.sample(shots, min(len(shots), 2))
         for s in selected:
             s_img = download_image(s['image'])
-            if s_img: imgs.append(s_img)
+            if s_img: final_imgs.append(s_img)
+            
+    # 4. Promo Ad
     if os.path.exists("images/promo_ad.jpg"):
-        with Image.open("images/promo_ad.jpg") as ad: imgs.append(ad.copy())
-    blobs = [models.AppBskyEmbedImages.Image(alt=full['name'], image=bsky.upload_blob(image_to_bytes(i)).blob) for i in imgs[:4] if i]
+        with Image.open("images/promo_ad.jpg") as ad: final_imgs.append(ad.copy())
+        
+    blobs = [models.AppBskyEmbedImages.Image(alt=full['name'], image=bsky.upload_blob(image_to_bytes(i)).blob) for i in final_imgs[:4] if i]
     bsky.send_post(tb, embed=models.AppBskyEmbedImages.Main(images=blobs))
     save_json('history_games.json', (load_json('history_games.json', []) + [full['id']])[-2000:])
 
 def main():
     logger.info("--- 🚀 START ---")
-    
-    # LOAD ENVIRONMENT VARIABLES INSIDE MAIN
     rawg_key = os.environ.get("RAWG_API_KEY")
     anthropic_key = os.environ.get("ANTHROPIC_API_KEY")
     handle = os.environ.get("BLUESKY_HANDLE")
