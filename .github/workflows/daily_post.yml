@@ -45,12 +45,12 @@ jobs:
 
     - name: Run Bot Script
       env:
+        # PULLING FROM REPOSITORY SECRETS
         RAWG_API_KEY: ${{ secrets.RAWG_API_KEY }}
         ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         BLUESKY_HANDLE: ${{ secrets.BLUESKY_HANDLE }}
         BLUESKY_PASSWORD: ${{ secrets.BLUESKY_PASSWORD }}
-        # Corrected syntax for manual input
-        FORCED_SLOT: ${{ github.event.inputs.force_slot || 'Auto-Detect' }}
+        FORCED_SLOT: ${{ github.event.inputs.force_slot }}
         IS_MANUAL: ${{ github.event_name == 'workflow_dispatch' }}
       run: python post_generator.py
 
@@ -58,6 +58,6 @@ jobs:
       run: |
         git config --global user.name "RetroBot-Action"
         git config --global user.email "bot@nostalgia.icu"
-        git pull origin main --rebase
+        git pull origin main --rebase || echo "No changes to pull"
         git add *.json
         git diff --quiet && git diff --staged --quiet || (git commit -m "Update history [skip ci]" && git push)
