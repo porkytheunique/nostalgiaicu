@@ -218,13 +218,20 @@ def run_single_game(bsky, theme, slot_tag, force_on_this_day=False):
 
 def main():
     logger.info("--- 🚀 START ---")
+    
+    # Pre-flight check to debug empty secrets
+    if not BSKY_HANDLE or not BSKY_PASSWORD:
+        logger.error(f"Missing Credentials! Handle: {'Found' if BSKY_HANDLE else 'MISSING'}, Pwd: {'Found' if BSKY_PASSWORD else 'MISSING'}")
+        return
+
     try:
         bsky = Client()
         bsky.login(BSKY_HANDLE, BSKY_PASSWORD)
     except Exception as e:
-        logger.error(f"Auth Fail: {e}") # This now prints the REAL error
+        logger.error(f"Auth Fail: {e}")
         return
 
+    # Improved logic for manual slot detection
     f = os.environ.get("FORCED_SLOT", "")
     man = os.environ.get("IS_MANUAL") == "true"
     now = datetime.utcnow()
@@ -232,13 +239,15 @@ def main():
     slot_id = None
     if man and f and "Slot" in f:
         match = re.search(r'Slot\s*(\d+)', f)
-        if match: slot_id = int(match.group(1))
+        if match: 
+            slot_id = int(match.group(1))
+            logger.info(f"Manual override detected: Slot {slot_id}")
     
     if slot_id is None:
         slot_id = SCHEDULE.get(now.weekday(), {}).get(now.hour)
     
     if not slot_id:
-        logger.info(f"No slot for Hour: {now.hour}, Day: {now.weekday()}")
+        logger.info(f"No slot scheduled for Day {now.weekday()} Hour {now.hour}")
         return
 
     handlers = {
@@ -259,8 +268,8 @@ def main():
     }
     
     if slot_id in handlers:
-        logger.info(f"Executing Slot {slot_id}")
         handlers[slot_id](bsky)
+    
     logger.info("--- 🏁 END ---")
 
 if __name__ == "__main__":
