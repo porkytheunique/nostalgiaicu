@@ -60,6 +60,7 @@ def save_json(filename, data):
     except: pass
 
 def download_image(url):
+    if not url: return None
     try:
         resp = requests.get(url, timeout=12)
         return Image.open(BytesIO(resp.content)) if resp.status_code == 200 else None
@@ -132,13 +133,16 @@ def run_rivalry(bsky, api_key, anthropic_key):
     if len(games_basic) < 2: return
     g1, g2 = deep_fetch_game(api_key, games_basic[0]['id']), deep_fetch_game(api_key, games_basic[1]['id'])
     
-    p = (f"Compare '{g1['name']}' and '{g2['name']}' ({g_name}). Briefly explain the rivalry or difference. "
-         f"Ask followers to pick a side. Limit 120 chars. No hashtags.")
+    logger.info(f"⚔️ Rivalry Slot: {g1['name']} vs {g2['name']}")
+
+    p = (f"Compare '{g1['name']}' and '{g2['name']}' ({g_name}). Briefly explain the rivalry. "
+         f"Ask followers to pick a side. Max 110 chars. No hashtags.")
     
     msg = anthropic.Anthropic(api_key=anthropic_key).messages.create(
-        model="claude-3-haiku-20240307", max_tokens=200, messages=[{"role": "user", "content": p}]
+        model="claude-3-haiku-20240307", max_tokens=150, messages=[{"role": "user", "content": p}]
     )
     text = msg.content[0].text.strip().replace('"', '')
+    
     tb = client_utils.TextBuilder()
     tb.text(f"{text}\n\n")
     tags = ["#Retro", "#RetroGaming", "#Rivalry"]
@@ -150,30 +154,28 @@ def run_rivalry(bsky, api_key, anthropic_key):
         tb.tag(t, t.replace("#", ""))
         if i < len(unique_tags)-1: tb.text(" ")
     
-    # --- Image Logic for Rivalry ---
+    # Slice text to safety limit
+    if len(tb.text) > 300:
+        logger.warning("Text too long, slicing.")
+        # Re-build simple text to avoid facet mismatch
+        tb = client_utils.TextBuilder()
+        tb.text(text[:250] + "... " + " ".join(unique_tags))
+
     final_imgs = []
-    
-    # 1. Versus Collage
     c1, c2 = download_image(g1.get('background_image')), download_image(g2.get('background_image'))
     if c1 and c2: final_imgs.append(create_collage([c1, c2]))
     
-    # 2. Game 1 Screenshot
-    s1_list = g1.get('short_screenshots', [])[1:11]
-    if s1_list:
-        img1 = download_image(random.choice(s1_list)['image'])
-        if img1: final_imgs.append(img1)
-        
-    # 3. Game 2 Screenshot
-    s2_list = g2.get('short_screenshots', [])[1:11]
-    if s2_list:
-        img2 = download_image(random.choice(s2_list)['image'])
-        if img2: final_imgs.append(img2)
+    for g in [g1, g2]:
+        shots = g.get('short_screenshots', [])[1:5]
+        if shots:
+            img = download_image(random.choice(shots)['image'])
+            if img: final_imgs.append(img)
 
-    # 4. Promo Ad
     if os.path.exists("images/promo_ad.jpg"):
         with Image.open("images/promo_ad.jpg") as ad: final_imgs.append(ad.copy())
 
-    blobs = [models.AppBskyEmbedImages.Image(alt="Rivalry", image=bsky.upload_blob(image_to_bytes(i)).blob) for i in final_imgs[:4]]
+    logger.info(f"📤 Uploading {len(final_imgs[:4])} images for Rivalry")
+    blobs = [models.AppBskyEmbedImages.Image(alt="Rivalry", image=bsky.upload_blob(image_to_bytes(i)).blob) for i in final_imgs[:4] if i]
     bsky.send_post(tb, embed=models.AppBskyEmbedImages.Main(images=blobs))
 
 def run_single_game(bsky, api_key, anthropic_key, theme, slot_tag, force_on_this_day=False):
@@ -197,14 +199,16 @@ def run_single_game(bsky, api_key, anthropic_key, theme, slot_tag, force_on_this
     
     if not game: return
     full = deep_fetch_game(api_key, game['id'])
-    p = (f"Write a {theme} post about '{full['name']}' ({full.get('released', 'N/A')}). "
-         f"Include a question for engagement. Max 110 chars. No hashtags. "
-         f"Safety: If unfamiliar, focus on the {full.get('genres', [{}])[0].get('name', 'Retro')} era.")
+    logger.info(f"🎮 Slot: {slot_tag} | Game: {full['name']}")
+
+    p = (f"Write a {theme} post about '{full['name']}'. "
+         f"Question for engagement included. Max 110 chars. No hashtags.")
     
     msg = anthropic.Anthropic(api_key=anthropic_key).messages.create(
         model="claude-3-haiku-20240307", max_tokens=150, messages=[{"role": "user", "content": p}]
     )
     text = msg.content[0].text.strip().replace('"', '')
+    
     tb = client_utils.TextBuilder()
     tb.text(f"{header}{text}\n\n")
     tags = ["#Retro", "#RetroGaming", slot_tag] + get_platform_tags(full)
@@ -214,26 +218,37 @@ def run_single_game(bsky, api_key, anthropic_key, theme, slot_tag, force_on_this
     for i, t in enumerate(unique_tags):
         tb.tag(t, t.replace("#", ""))
         if i < len(unique_tags)-1: tb.text(" ")
-        
-    # --- Image Logic for Single Game ---
+    
+    # Character Safety Check
+    if len(tb.text) > 300:
+        logger.warning(f"Truncating post from {len(tb.text)} characters.")
+        short_text = (header + text)[:240] + "..."
+        tb = client_utils.TextBuilder()
+        tb.text(short_text + "\n\n")
+        for i, t in enumerate(unique_tags):
+            tb.tag(t, t.replace("#", ""))
+            if i < len(unique_tags)-1: tb.text(" ")
+
+    # --- Image Logic for Single Game (Aiming for 3+1) ---
     final_imgs = []
     
-    # 1. Background
+    # Priority 1: Background
     bg = download_image(full.get('background_image'))
     if bg: final_imgs.append(bg)
     
-    # 2 & 3. Random Screenshots
-    shots = full.get('short_screenshots', [])[1:11]
-    if shots:
-        selected = random.sample(shots, min(len(shots), 2))
-        for s in selected:
-            s_img = download_image(s['image'])
-            if s_img: final_imgs.append(s_img)
+    # Priority 2: Screenshots (Fill up to 3 total game images)
+    shots = full.get('short_screenshots', [])
+    # Filter out the one we might have already used as background if URL matches
+    for s in shots:
+        if len(final_imgs) >= 3: break
+        img = download_image(s['image'])
+        if img: final_imgs.append(img)
             
-    # 4. Promo Ad
+    # Priority 3: Promo Ad (Slot 4)
     if os.path.exists("images/promo_ad.jpg"):
         with Image.open("images/promo_ad.jpg") as ad: final_imgs.append(ad.copy())
         
+    logger.info(f"📸 Prepared {len(final_imgs)} images for upload.")
     blobs = [models.AppBskyEmbedImages.Image(alt=full['name'], image=bsky.upload_blob(image_to_bytes(i)).blob) for i in final_imgs[:4] if i]
     bsky.send_post(tb, embed=models.AppBskyEmbedImages.Main(images=blobs))
     save_json('history_games.json', (load_json('history_games.json', []) + [full['id']])[-2000:])
@@ -246,7 +261,7 @@ def main():
     password = os.environ.get("BLUESKY_PASSWORD")
 
     if not handle or not password:
-        logger.error(f"Credentials Check -> Handle: {'OK' if handle else 'MISSING'}, Pwd: {'OK' if password else 'MISSING'}")
+        logger.error(f"Credentials Missing")
         return
 
     try:
@@ -266,13 +281,13 @@ def main():
         match = re.search(r'Slot\s*(\d+)', f)
         if match: 
             slot_id = int(match.group(1))
-            logger.info(f"Manual Override: Executing Slot {slot_id}")
+            logger.info(f"Manual Override: Slot {slot_id}")
     
     if slot_id is None:
         slot_id = SCHEDULE.get(now.weekday(), {}).get(now.hour)
     
     if not slot_id:
-        logger.info(f"No slot scheduled for Hour {now.hour}")
+        logger.info(f"No slot for Hour {now.hour}")
         return
 
     handlers = {
