@@ -20,6 +20,8 @@ logging.basicConfig(
 logger = logging.getLogger()
 
 # --- CONSTANTS ---
+RANDOM_PROMO_CHANCE = 0.33 # Only 33% of posts will have an ad
+
 FRANCHISE_MAP = {
     "ZELDA": "#LegendOfZelda", "MARIO": "#SuperMario", "METROID": "#Metroid",
     "SONIC": "#SonicTheHedgehog", "FINAL FANTASY": "#FinalFantasy",
@@ -135,7 +137,7 @@ def run_rivalry(bsky, api_key, anthropic_key):
     
     logger.info(f"⚔️ Rivalry: {g1['name']} vs {g2['name']}")
 
-    p = (f"Briefly compare '{g1['name']}' and '{g2['name']}'. Ask followers to pick. Max 100 chars.")
+    p = (f"Compare '{g1['name']}' and '{g2['name']}' ({g_name}). Briefly explain why they are classics. Max 100 chars.")
     msg = anthropic.Anthropic(api_key=anthropic_key).messages.create(
         model="claude-3-haiku-20240307", max_tokens=150, messages=[{"role": "user", "content": p}]
     )
@@ -148,24 +150,30 @@ def run_rivalry(bsky, api_key, anthropic_key):
     unique_tags = list(dict.fromkeys(tags))
 
     tb = client_utils.TextBuilder()
-    tb.text(f"{text[:200]}\n\n") # Basic truncation safety
+    tb.text(f"{text[:200]}\n\n")
     for i, t in enumerate(unique_tags):
         tb.tag(t, t.replace("#", ""))
         if i < len(unique_tags)-1: tb.text(" ")
 
     final_imgs = []
-    c1, c2 = download_image(g1.get('background_image')), download_image(g2.get('background_image'))
+    # 1. Collage of Covers
+    c1, c2 = download_image(g1.get('background_image_additional') or g1.get('background_image')), download_image(g2.get('background_image_additional') or g2.get('background_image'))
     if c1 and c2: final_imgs.append(create_collage([c1, c2]))
     
-    # Fill remaining slots with screenshots
-    for g in [g1, g2]:
-        if len(final_imgs) >= 3: break
-        shots = g.get('short_screenshots', [])[1:5]
-        if shots:
-            img = download_image(random.choice(shots)['image'])
-            if img: final_imgs.append(img)
+    # 2. Screenshot Game 1
+    s1 = g1.get('short_screenshots', [])
+    if len(s1) > 1:
+        img = download_image(s1[1]['image'])
+        if img: final_imgs.append(img)
+        
+    # 3. Screenshot Game 2
+    s2 = g2.get('short_screenshots', [])
+    if len(s2) > 1:
+        img = download_image(s2[1]['image'])
+        if img: final_imgs.append(img)
 
-    if os.path.exists("images/promo_ad.jpg"):
+    # 4. Promo Ad (Conditional)
+    if random.random() < RANDOM_PROMO_CHANCE and os.path.exists("images/promo_ad.jpg"):
         with Image.open("images/promo_ad.jpg") as ad: final_imgs.append(ad.copy())
 
     blobs = [models.AppBskyEmbedImages.Image(alt="Rivalry", image=bsky.upload_blob(image_to_bytes(i)).blob) for i in final_imgs[:4] if i]
@@ -194,7 +202,7 @@ def run_single_game(bsky, api_key, anthropic_key, theme, slot_tag, force_on_this
     full = deep_fetch_game(api_key, game['id'])
     logger.info(f"🎮 Slot: {slot_tag} | Game: {full['name']}")
 
-    p = (f"Write a {theme} post about '{full['name']}'. Ask a question. Max 100 chars.")
+    p = (f"Write a {theme} post about '{full['name']}'. Include a question. Max 100 chars.")
     msg = anthropic.Anthropic(api_key=anthropic_key).messages.create(
         model="claude-3-haiku-20240307", max_tokens=150, messages=[{"role": "user", "content": p}]
     )
@@ -205,7 +213,6 @@ def run_single_game(bsky, api_key, anthropic_key, theme, slot_tag, force_on_this
     if gtag: tags.append(gtag)
     unique_tags = list(dict.fromkeys(tags))
 
-    # Safe text construction
     display_text = f"{header}{text}"
     if len(display_text) > 240: display_text = display_text[:237] + "..."
     
@@ -215,22 +222,32 @@ def run_single_game(bsky, api_key, anthropic_key, theme, slot_tag, force_on_this
         tb.tag(t, t.replace("#", ""))
         if i < len(unique_tags)-1: tb.text(" ")
         
-    # --- Image Logic (3+1) ---
+    # --- IMAGE LOGIC (Box Cover + 2 Screenshots + Optional Promo) ---
     final_imgs = []
-    # 1. Background
-    bg = download_image(full.get('background_image'))
-    if bg: final_imgs.append(bg)
     
-    # 2. Screenshots (try to fill up to 3 game images total)
-    shots = full.get('short_screenshots', [])
-    for s in shots:
+    # 1. Box Art (RAWG often puts this in background_image_additional)
+    box = download_image(full.get('background_image_additional')) or download_image(full.get('background_image'))
+    if box: final_imgs.append(box)
+    
+    # 2. Collect all potential screenshots (excluding the box art)
+    potential_urls = []
+    if full.get('short_screenshots'):
+        potential_urls = [s['image'] for s in full['short_screenshots'] if s['image'] != full.get('background_image_additional')]
+
+    # 3. Add up to 2 screenshots
+    for url in potential_urls:
         if len(final_imgs) >= 3: break
-        if s['image'] == full.get('background_image'): continue # avoid duplicates
-        img = download_image(s['image'])
+        img = download_image(url)
         if img: final_imgs.append(img)
+
+    # 4. Fill remaining game slots if we are still under 3 (using main background as fallback)
+    if len(final_imgs) < 3 and full.get('background_image'):
+        if download_image(full.get('background_image')) not in final_imgs:
+            img = download_image(full.get('background_image'))
+            if img: final_imgs.append(img)
             
-    # 3. Promo Ad (Slot 4)
-    if os.path.exists("images/promo_ad.jpg"):
+    # 5. Promo Ad (33% chance)
+    if random.random() < RANDOM_PROMO_CHANCE and os.path.exists("images/promo_ad.jpg"):
         with Image.open("images/promo_ad.jpg") as ad: final_imgs.append(ad.copy())
         
     logger.info(f"📸 Images prepared: {len(final_imgs)}")
