@@ -133,39 +133,33 @@ def run_rivalry(bsky, api_key, anthropic_key):
     if len(games_basic) < 2: return
     g1, g2 = deep_fetch_game(api_key, games_basic[0]['id']), deep_fetch_game(api_key, games_basic[1]['id'])
     
-    logger.info(f"⚔️ Rivalry Slot: {g1['name']} vs {g2['name']}")
+    logger.info(f"⚔️ Rivalry: {g1['name']} vs {g2['name']}")
 
-    p = (f"Compare '{g1['name']}' and '{g2['name']}' ({g_name}). Briefly explain the rivalry. "
-         f"Ask followers to pick a side. Max 110 chars. No hashtags.")
-    
+    p = (f"Briefly compare '{g1['name']}' and '{g2['name']}'. Ask followers to pick. Max 100 chars.")
     msg = anthropic.Anthropic(api_key=anthropic_key).messages.create(
         model="claude-3-haiku-20240307", max_tokens=150, messages=[{"role": "user", "content": p}]
     )
     text = msg.content[0].text.strip().replace('"', '')
-    
-    tb = client_utils.TextBuilder()
-    tb.text(f"{text}\n\n")
+
     tags = ["#Retro", "#RetroGaming", "#Rivalry"]
     for g in [g1, g2]:
         t = clean_game_hashtag(g['name'], tags)
         if t: tags.append(t)
     unique_tags = list(dict.fromkeys(tags))
+
+    tb = client_utils.TextBuilder()
+    tb.text(f"{text[:200]}\n\n") # Basic truncation safety
     for i, t in enumerate(unique_tags):
         tb.tag(t, t.replace("#", ""))
         if i < len(unique_tags)-1: tb.text(" ")
-    
-    # Slice text to safety limit
-    if len(tb.text) > 300:
-        logger.warning("Text too long, slicing.")
-        # Re-build simple text to avoid facet mismatch
-        tb = client_utils.TextBuilder()
-        tb.text(text[:250] + "... " + " ".join(unique_tags))
 
     final_imgs = []
     c1, c2 = download_image(g1.get('background_image')), download_image(g2.get('background_image'))
     if c1 and c2: final_imgs.append(create_collage([c1, c2]))
     
+    # Fill remaining slots with screenshots
     for g in [g1, g2]:
+        if len(final_imgs) >= 3: break
         shots = g.get('short_screenshots', [])[1:5]
         if shots:
             img = download_image(random.choice(shots)['image'])
@@ -174,7 +168,6 @@ def run_rivalry(bsky, api_key, anthropic_key):
     if os.path.exists("images/promo_ad.jpg"):
         with Image.open("images/promo_ad.jpg") as ad: final_imgs.append(ad.copy())
 
-    logger.info(f"📤 Uploading {len(final_imgs[:4])} images for Rivalry")
     blobs = [models.AppBskyEmbedImages.Image(alt="Rivalry", image=bsky.upload_blob(image_to_bytes(i)).blob) for i in final_imgs[:4] if i]
     bsky.send_post(tb, embed=models.AppBskyEmbedImages.Main(images=blobs))
 
@@ -201,54 +194,46 @@ def run_single_game(bsky, api_key, anthropic_key, theme, slot_tag, force_on_this
     full = deep_fetch_game(api_key, game['id'])
     logger.info(f"🎮 Slot: {slot_tag} | Game: {full['name']}")
 
-    p = (f"Write a {theme} post about '{full['name']}'. "
-         f"Question for engagement included. Max 110 chars. No hashtags.")
-    
+    p = (f"Write a {theme} post about '{full['name']}'. Ask a question. Max 100 chars.")
     msg = anthropic.Anthropic(api_key=anthropic_key).messages.create(
         model="claude-3-haiku-20240307", max_tokens=150, messages=[{"role": "user", "content": p}]
     )
     text = msg.content[0].text.strip().replace('"', '')
     
-    tb = client_utils.TextBuilder()
-    tb.text(f"{header}{text}\n\n")
     tags = ["#Retro", "#RetroGaming", slot_tag] + get_platform_tags(full)
     gtag = clean_game_hashtag(full['name'], tags)
     if gtag: tags.append(gtag)
     unique_tags = list(dict.fromkeys(tags))
+
+    # Safe text construction
+    display_text = f"{header}{text}"
+    if len(display_text) > 240: display_text = display_text[:237] + "..."
+    
+    tb = client_utils.TextBuilder()
+    tb.text(f"{display_text}\n\n")
     for i, t in enumerate(unique_tags):
         tb.tag(t, t.replace("#", ""))
         if i < len(unique_tags)-1: tb.text(" ")
-    
-    # Character Safety Check
-    if len(tb.text) > 300:
-        logger.warning(f"Truncating post from {len(tb.text)} characters.")
-        short_text = (header + text)[:240] + "..."
-        tb = client_utils.TextBuilder()
-        tb.text(short_text + "\n\n")
-        for i, t in enumerate(unique_tags):
-            tb.tag(t, t.replace("#", ""))
-            if i < len(unique_tags)-1: tb.text(" ")
-
-    # --- Image Logic for Single Game (Aiming for 3+1) ---
+        
+    # --- Image Logic (3+1) ---
     final_imgs = []
-    
-    # Priority 1: Background
+    # 1. Background
     bg = download_image(full.get('background_image'))
     if bg: final_imgs.append(bg)
     
-    # Priority 2: Screenshots (Fill up to 3 total game images)
+    # 2. Screenshots (try to fill up to 3 game images total)
     shots = full.get('short_screenshots', [])
-    # Filter out the one we might have already used as background if URL matches
     for s in shots:
         if len(final_imgs) >= 3: break
+        if s['image'] == full.get('background_image'): continue # avoid duplicates
         img = download_image(s['image'])
         if img: final_imgs.append(img)
             
-    # Priority 3: Promo Ad (Slot 4)
+    # 3. Promo Ad (Slot 4)
     if os.path.exists("images/promo_ad.jpg"):
         with Image.open("images/promo_ad.jpg") as ad: final_imgs.append(ad.copy())
         
-    logger.info(f"📸 Prepared {len(final_imgs)} images for upload.")
+    logger.info(f"📸 Images prepared: {len(final_imgs)}")
     blobs = [models.AppBskyEmbedImages.Image(alt=full['name'], image=bsky.upload_blob(image_to_bytes(i)).blob) for i in final_imgs[:4] if i]
     bsky.send_post(tb, embed=models.AppBskyEmbedImages.Main(images=blobs))
     save_json('history_games.json', (load_json('history_games.json', []) + [full['id']])[-2000:])
@@ -260,16 +245,14 @@ def main():
     handle = os.environ.get("BLUESKY_HANDLE")
     password = os.environ.get("BLUESKY_PASSWORD")
 
-    if not handle or not password:
-        logger.error(f"Credentials Missing")
-        return
+    if not handle or not password: return
 
     try:
         bsky = Client()
         bsky.login(handle, password)
         logger.info("Login Successful")
     except Exception as e:
-        logger.error(f"Bluesky Login Error: {e}")
+        logger.error(f"Login Error: {e}")
         return
 
     f = os.environ.get("FORCED_SLOT", "")
@@ -279,9 +262,7 @@ def main():
     slot_id = None
     if man and f and "Slot" in f:
         match = re.search(r'Slot\s*(\d+)', f)
-        if match: 
-            slot_id = int(match.group(1))
-            logger.info(f"Manual Override: Slot {slot_id}")
+        if match: slot_id = int(match.group(1))
     
     if slot_id is None:
         slot_id = SCHEDULE.get(now.weekday(), {}).get(now.hour)
