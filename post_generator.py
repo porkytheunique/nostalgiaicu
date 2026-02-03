@@ -30,7 +30,7 @@ FRANCHISE_MAP = {
     "STREET FIGHTER": "#StreetFighter", "DONKEY KONG": "#DonkeyKong",
     "PHANTASY STAR": "#PhantasyStar", "MIDNIGHT CLUB": "#MidnightClub",
     "TEKKEN": "#Tekken", "MORTAL KOMBAT": "#MortalKombat", "PAC-MAN": "#PacMan",
-    "EVERMORE": "#SecretOfEvermore", "CHRONO": "#ChronoTrigger"
+    "EVERMORE": "#SecretOfEvermore", "CHRONO": "#ChronoTrigger", "GRAND THEFT AUTO": "#GrandTheftAuto"
 }
 
 RETRO_PLATFORMS = {
@@ -91,11 +91,16 @@ def create_collage(images):
 
 def clean_game_hashtag(game_name, current_tags):
     upper = game_name.upper()
+    # 1. Check Franchise Map
     for k, v in FRANCHISE_MAP.items():
         if k in upper: return v
-    clean = re.sub(r'[^a-zA-Z0-9]', '', "".join(game_name.split(':')[0].split('-')[0].split()[:2]))
-    tag = f"#{clean}"
-    if len(tag) > 20 or len(clean) < 2:
+    
+    # 2. Smart Slugger: Remove special chars, join words, max 3 words
+    clean_name = re.sub(r'[^a-zA-Z0-9\s]', '', game_name)
+    words = clean_name.split()[:3]
+    tag = "#" + "".join(word.capitalize() for word in words)
+    
+    if len(tag) > 25 or len(tag) < 3:
         return "#Nostalgia" if "#Nostalgia" not in current_tags else None
     return tag
 
@@ -110,7 +115,9 @@ def get_platform_tags(game_data):
     return found[:1] if found else ["#RetroGaming"]
 
 def fetch_games_list(api_key, count=1, genre_id=None, dates=None):
-    url = f"https://api.rawg.io/api/games?key={api_key}&platforms={RETRO_IDS_STR}&page_size=40"
+    # Dig deeper by picking a random page between 1 and 10
+    rand_page = random.randint(1, 10)
+    url = f"https://api.rawg.io/api/games?key={api_key}&platforms={RETRO_IDS_STR}&page_size=40&page={rand_page}"
     if genre_id: url += f"&genres={genre_id}"
     if dates: url += f"&dates={dates}"
     try:
@@ -128,7 +135,6 @@ def deep_fetch_game(api_key, game_id):
     except: return None
 
 def get_deep_images(api_key, full_game_obj, limit=3):
-    """Core logic to ensure we get unique images (Box Art + Screens)"""
     final_imgs = []
     seen_urls = set()
 
@@ -139,12 +145,9 @@ def get_deep_images(api_key, full_game_obj, limit=3):
                 final_imgs.append(img)
                 seen_urls.add(url)
 
-    # 1. Box Art / Additional
     add_from_url(full_game_obj.get('background_image_additional'))
-    # 2. Main Background
     add_from_url(full_game_obj.get('background_image'))
     
-    # 3. Deep Screenshot API Fetch
     try:
         ss_url = f"https://api.rawg.io/api/games/{full_game_obj['id']}/screenshots?key={api_key}"
         res = requests.get(ss_url, timeout=10).json().get('results', [])
@@ -153,7 +156,6 @@ def get_deep_images(api_key, full_game_obj, limit=3):
             if len(final_imgs) >= limit: break
     except: pass
 
-    # 4. Fallback to short screenshots list
     if len(final_imgs) < limit:
         for s in full_game_obj.get('short_screenshots', []):
             add_from_url(s.get('image'))
@@ -170,9 +172,13 @@ def run_rivalry(bsky, api_key, anthropic_key):
     g1, g2 = deep_fetch_game(api_key, games_basic[0]['id']), deep_fetch_game(api_key, games_basic[1]['id'])
     
     logger.info(f"⚔️ Rivalry: {g1['name']} vs {g2['name']}")
-    p = (f"Briefly compare '{g1['name']}' and '{g2['name']}'. Max 100 chars.")
+    
+    prompt = (f"Compare '{g1['name']}' and '{g2['name']}'. "
+              f"Act like a retro gaming enthusiast. Briefly state what made each special, "
+              f"then end with a punchy 'Pick one' question. Limit: 200 chars. No hashtags.")
+
     msg = anthropic.Anthropic(api_key=anthropic_key).messages.create(
-        model="claude-3-haiku-20240307", max_tokens=150, messages=[{"role": "user", "content": p}]
+        model="claude-3-haiku-20240307", max_tokens=200, messages=[{"role": "user", "content": prompt}]
     )
     text = msg.content[0].text.strip().replace('"', '')
 
@@ -183,33 +189,28 @@ def run_rivalry(bsky, api_key, anthropic_key):
     unique_tags = list(dict.fromkeys(tags))
 
     tb = client_utils.TextBuilder()
-    tb.text(f"{text[:200]}\n\n")
+    tb.text(f"{text}\n\n")
     for i, t in enumerate(unique_tags):
         tb.tag(t, t.replace("#", ""))
         if i < len(unique_tags)-1: tb.text(" ")
 
     final_imgs = []
-    # 1. Collage (Box Art 1 + Box Art 2)
     c1 = download_image(g1.get('background_image_additional') or g1.get('background_image'))
     c2 = download_image(g2.get('background_image_additional') or g2.get('background_image'))
     if c1 and c2: final_imgs.append(create_collage([c1, c2]))
     
-    # 2. Screen from Game 1
     g1_screens = get_deep_images(api_key, g1, limit=5)
     if len(g1_screens) > 1: final_imgs.append(g1_screens[1])
-
-    # 3. Screen from Game 2
     g2_screens = get_deep_images(api_key, g2, limit=5)
     if len(g2_screens) > 1: final_imgs.append(g2_screens[1])
 
-    # 4. Promo (33% Chance)
     if random.random() < RANDOM_PROMO_CHANCE and os.path.exists("images/promo_ad.jpg"):
         with Image.open("images/promo_ad.jpg") as ad: final_imgs.append(ad.copy())
 
     blobs = [models.AppBskyEmbedImages.Image(alt="Rivalry", image=bsky.upload_blob(image_to_bytes(i)).blob) for i in final_imgs[:4] if i]
     bsky.send_post(tb, embed=models.AppBskyEmbedImages.Main(images=blobs))
 
-def run_single_game(bsky, api_key, anthropic_key, theme, slot_tag, force_on_this_day=False):
+def run_single_game(bsky, api_key, anthropic_key, theme_desc, slot_tag, force_on_this_day=False):
     game, header, now = None, "", datetime.now()
     if force_on_this_day:
         for _ in range(5):
@@ -232,9 +233,13 @@ def run_single_game(bsky, api_key, anthropic_key, theme, slot_tag, force_on_this
     full = deep_fetch_game(api_key, game['id'])
     logger.info(f"🎮 Slot: {slot_tag} | Game: {full['name']}")
 
-    p = (f"Write a {theme} post about '{full['name']}'. Max 100 chars.")
+    # Enhanced Voice-specific prompts
+    prompt = (f"Write a {theme_desc} post about '{full['name']}'. "
+              f"Structure: 1. A catchy hook. 2. A brief, personal-sounding detail. 3. A question for the readers. "
+              f"Strict limit: 220 characters. Do not use hashtags. Be evocative and nostalgic.")
+
     msg = anthropic.Anthropic(api_key=anthropic_key).messages.create(
-        model="claude-3-haiku-20240307", max_tokens=150, messages=[{"role": "user", "content": p}]
+        model="claude-3-haiku-20240307", max_tokens=250, messages=[{"role": "user", "content": prompt}]
     )
     text = msg.content[0].text.strip().replace('"', '')
     
@@ -243,18 +248,18 @@ def run_single_game(bsky, api_key, anthropic_key, theme, slot_tag, force_on_this
     if gtag: tags.append(gtag)
     unique_tags = list(dict.fromkeys(tags))
 
-    display_text = f"{header}{text}"
-    if len(display_text) > 240: display_text = display_text[:237] + "..."
+    # Safety Truncation: Slices at last space to avoid mid-word cutoff if over 250
+    final_body = f"{header}{text}"
+    if len(final_body) > 250:
+        final_body = final_body[:247].rsplit(' ', 1)[0] + "..."
     
     tb = client_utils.TextBuilder()
-    tb.text(f"{display_text}\n\n")
+    tb.text(f"{final_body}\n\n")
     for i, t in enumerate(unique_tags):
         tb.tag(t, t.replace("#", ""))
         if i < len(unique_tags)-1: tb.text(" ")
         
-    # --- Unified 3+1 Image Logic ---
     final_imgs = get_deep_images(api_key, full, limit=3)
-            
     if random.random() < RANDOM_PROMO_CHANCE and os.path.exists("images/promo_ad.jpg"):
         with Image.open("images/promo_ad.jpg") as ad: final_imgs.append(ad.copy())
         
@@ -296,24 +301,28 @@ def main():
         logger.info(f"No slot for Hour {now.hour}")
         return
 
+    # Descriptions now include a "voice" instruction
     handlers = {
-        1: lambda b: run_single_game(b, rawg_key, anthropic_key, "nostalgic memory", "#Nostalgia"),
-        9: lambda b: run_single_game(b, rawg_key, anthropic_key, "cool historical fact", "#RetroGaming"),
-        4: lambda b: run_single_game(b, rawg_key, anthropic_key, "unpopular opinion", "#UnpopularOpinion"),
-        6: lambda b: run_single_game(b, rawg_key, anthropic_key, "hidden gem", "#HiddenGem"),
-        11: lambda b: run_single_game(b, rawg_key, anthropic_key, "relaxing weekend morning", "#RetroGaming"),
-        2: lambda b: run_single_game(b, rawg_key, anthropic_key, "quick spotlight", "#ClassicGaming"),
-        3: lambda b: run_rivalry(b, rawg_key, anthropic_key),
-        18: lambda b: run_rivalry(b, rawg_key, anthropic_key),
-        17: lambda b: run_single_game(b, rawg_key, anthropic_key, "gameplay mechanics deep dive", "#RetroGaming"),
-        8: lambda b: run_single_game(b, rawg_key, anthropic_key, "tribute to the developers", "#RetroDev"),
-        10: lambda b: run_single_game(b, rawg_key, anthropic_key, "visual style and art direction", "#BoxArt"),
-        12: lambda b: run_single_game(b, rawg_key, anthropic_key, "Sunday afternoon playthrough", "#RetroGaming"),
-        13: lambda b: run_single_game(b, rawg_key, anthropic_key, "anniversary", "#OnThisDay", True),
-        14: lambda b: run_single_game(b, rawg_key, anthropic_key, "legacy and impact", "#OnThisDay", True),
-        15: lambda b: run_single_game(b, rawg_key, anthropic_key, "historical release context", "#OnThisDay", True)
+        1: lambda b: run_single_game(b, raw_key, anth_key, "nostalgic and cozy memory", "#Nostalgia"),
+        9: lambda b: run_single_game(b, raw_key, anth_key, "surprising and cool historical fact", "#RetroGaming"),
+        4: lambda b: run_single_game(b, raw_key, anth_key, "spicy and controversial unpopular opinion", "#UnpopularOpinion"),
+        6: lambda b: run_single_game(b, raw_key, anth_key, "mysterious 'have you heard of this' hidden gem", "#HiddenGem"),
+        11: lambda b: run_single_game(b, raw_key, anth_key, "lazy, relaxing weekend morning", "#RetroGaming"),
+        2: lambda b: run_single_game(b, raw_key, anth_key, "fast-paced quick spotlight", "#ClassicGaming"),
+        3: lambda b: run_rivalry(b, raw_key, anth_key),
+        18: lambda b: run_rivalry(b, raw_key, anth_key),
+        17: lambda b: run_single_game(b, raw_key, anth_key, "technical and nerdy gameplay mechanics deep dive", "#RetroGaming"),
+        8: lambda b: run_single_game(b, raw_key, anth_key, "heartfelt tribute to the creative developers", "#RetroDev"),
+        10: lambda b: run_single_game(b, raw_key, anth_key, "visually focused art direction and box art", "#BoxArt"),
+        12: lambda b: run_single_game(b, raw_key, anth_key, "chilled Sunday afternoon playthrough", "#RetroGaming"),
+        13: lambda b: run_single_game(b, raw_key, anth_key, "historical anniversary", "#OnThisDay", True),
+        14: lambda b: run_single_game(b, raw_key, anth_key, "deep legacy and cultural impact", "#OnThisDay", True),
+        15: lambda b: run_single_game(b, raw_key, anth_key, "context-heavy historical release", "#OnThisDay", True)
     }
     
+    # Note: Passed rawg_key and anthropic_key aliases for brevity in handlers dict
+    raw_key, anth_key = rawg_key, anthropic_key
+
     if slot_id in handlers:
         handlers[slot_id](bsky)
     
