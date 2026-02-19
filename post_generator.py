@@ -21,24 +21,9 @@ logger = logging.getLogger()
 
 # --- CONSTANTS ---
 RANDOM_PROMO_CHANCE = 0.33 
-CURRENT_YEAR = 2026 # Force grounding
+CURRENT_YEAR = 2026 
 
-# Prioritized list to find the "Original/Iconic" platform
-PLATFORM_PRIORITY = [
-    49,  # NES
-    79,  # SNES
-    167, # Genesis
-    109, # TG-16
-    12,  # Neo Geo
-    27,  # PS1
-    83,  # N64
-    106, # Dreamcast
-    15,  # PS2
-    105, # GameCube
-    80,  # Xbox
-    24,  # GBA
-    43   # GBC
-]
+PLATFORM_PRIORITY = [49, 79, 167, 109, 12, 27, 83, 106, 15, 105, 80, 24, 43]
 
 FRANCHISE_MAP = {
     "ZELDA": "#LegendOfZelda", "MARIO": "#SuperMario", "METROID": "#Metroid",
@@ -119,12 +104,10 @@ def clean_game_hashtag(game_name, current_tags):
     return tag
 
 def get_platform_tags(game_data):
-    # Search through platforms list based on our priority list
     p_ids = [p['platform']['id'] for p in game_data.get('platforms', [])]
     for priority_id in PLATFORM_PRIORITY:
         if priority_id in p_ids:
-            tag = f"#{RETRO_PLATFORMS[priority_id].replace(' ', '')}"
-            return [tag]
+            return [f"#{RETRO_PLATFORMS[priority_id].replace(' ', '')}"]
     return ["#RetroGaming"]
 
 def fetch_games_list(api_key, count=1, genre_id=None, dates=None):
@@ -147,14 +130,11 @@ def deep_fetch_game(api_key, game_id):
     except: return None
 
 def get_deep_images(api_key, full_game_obj, limit=3):
-    final_imgs = []
-    seen_urls = set()
+    final_imgs, seen_urls = [], set()
     def add_url(url):
         if url and url not in seen_urls and len(final_imgs) < limit:
             img = download_image(url)
-            if img:
-                final_imgs.append(img)
-                seen_urls.add(url)
+            if img: final_imgs.append(img); seen_urls.add(url)
     add_url(full_game_obj.get('background_image_additional'))
     add_url(full_game_obj.get('background_image'))
     try:
@@ -174,9 +154,7 @@ def run_rivalry(bsky, api_key, anthropic_key):
     if len(games_basic) < 2: return
     g1, g2 = deep_fetch_game(api_key, games_basic[0]['id']), deep_fetch_game(api_key, games_basic[1]['id'])
     
-    logger.info(f"⚔️ Rivalry: {g1['name']} vs {g2['name']}")
-    prompt = (f"Compare '{g1['name']}' and '{g2['name']}' in a cool, nostalgic way. "
-              f"Ask followers a 'Pick one' question at the end. Limit: 200 chars. No hashtags.")
+    prompt = (f"Compare '{g1['name']}' and '{g2['name']}'. Be punchy. Must end with a 'Pick one' question. 200 chars max.")
     msg = anthropic.Anthropic(api_key=anthropic_key).messages.create(
         model="claude-3-haiku-20240307", max_tokens=250, messages=[{"role": "user", "content": prompt}]
     )
@@ -184,7 +162,7 @@ def run_rivalry(bsky, api_key, anthropic_key):
 
     tags = ["#Retro", "#RetroGaming", "#Rivalry"]
     for g in [g1, g2]:
-        t = clean_game_hashtag(g['name'], tags); 
+        t = clean_game_hashtag(g['name'], tags)
         if t: tags.append(t)
     unique_tags = list(dict.fromkeys(tags))
 
@@ -198,10 +176,9 @@ def run_rivalry(bsky, api_key, anthropic_key):
     c1 = download_image(g1.get('background_image_additional') or g1.get('background_image'))
     c2 = download_image(g2.get('background_image_additional') or g2.get('background_image'))
     if c1 and c2: final_imgs.append(create_collage([c1, c2]))
-    
     for g in [g1, g2]:
-        screens = get_deep_images(api_key, g, limit=5)
-        if len(screens) > 1: final_imgs.append(screens[1])
+        sc = get_deep_images(api_key, g, limit=5)
+        if len(sc) > 1: final_imgs.append(sc[1])
 
     if random.random() < RANDOM_PROMO_CHANCE and os.path.exists("images/promo_ad.jpg"):
         with Image.open("images/promo_ad.jpg") as ad: final_imgs.append(ad.copy())
@@ -211,42 +188,43 @@ def run_rivalry(bsky, api_key, anthropic_key):
 
 def run_single_game(bsky, api_key, anthropic_key, theme_desc, slot_tag, force_on_this_day=False):
     game, header, now = None, "", datetime.now()
+    matched_exactly = False
+
     if force_on_this_day:
-        for _ in range(5):
-            yr = random.randint(1985, 2005)
-            d_str = f"{yr}-{now.strftime('%m-%d')}"
-            res = fetch_games_list(api_key, count=1, dates=f"{d_str},{d_str}")
-            if res:
-                game, header = res[0], f"📅 On This Day in {yr}\n\n"
-                break
-        if not game:
+        yr = random.randint(1985, 2005)
+        d_str = f"{yr}-{now.strftime('%m-%d')}"
+        res = fetch_games_list(api_key, count=1, dates=f"{d_str},{d_str}")
+        if res:
+            game, header, matched_exactly = res[0], f"📅 On This Day in {yr}\n\n", True
+        else:
             m_name, yr_fb = now.strftime('%B'), random.randint(1985, 2005)
             res = fetch_games_list(api_key, count=1, dates=f"{yr_fb}-{now.strftime('%m')}-01,{yr_fb}-{now.strftime('%m')}-28")
             if res: game, header = res[0], f"🗓️ In {m_name}, {yr_fb}\n\n"
     
-    if not game:
-        res = fetch_games_list(api_key, count=1)
-        game = res[0] if res else None
-    
+    if not game: game = (fetch_games_list(api_key, count=1) or [None])[0]
     if not game: return
     full = deep_fetch_game(api_key, game['id'])
     
-    # --- Python Calculation for Grounding ---
+    # --- Better Grounding Logic ---
     rel_str = full.get('released', 'Unknown')
-    age_text = ""
+    tone_hint = "Speak about this game's legacy generally."
     if rel_str != 'Unknown':
         try:
-            rel_year = int(rel_str.split('-')[0])
-            age = CURRENT_YEAR - rel_year
-            age_text = f"This game is exactly {age} years old in 2026."
+            r_y, r_m, r_d = map(int, rel_str.split('-'))
+            age = CURRENT_YEAR - r_y
+            if matched_exactly and now.month == r_m and now.day == r_d:
+                tone_hint = f"Celebrate its EXACT {age}th anniversary today! Be excited."
+            elif now.month == r_m:
+                tone_hint = f"It's the anniversary month! Mention it turns {age} this year."
+            else:
+                tone_hint = f"Looking back at this {r_y} classic (now {age} years old)."
         except: pass
 
-    logger.info(f"🎮 {slot_tag} | {full['name']} | Released: {rel_str}")
+    logger.info(f"🎮 {slot_tag} | {full['name']} | Tone: {tone_hint}")
 
     prompt = (f"Write a {theme_desc} post about '{full['name']}'. "
-              f"FACT: It was released in {rel_str}. Today is February 2026. {age_text} "
-              f"Instructions: Use a strong hook, one personal detail, and MUST end with a question. "
-              f"Limit: 220 chars. Ground yourself in the year {CURRENT_YEAR}. No hashtags.")
+              f"Fact: {tone_hint}. Current Year: {CURRENT_YEAR}. "
+              f"Rules: Hook, Detail, Question. Max 220 chars. Do NOT lie about dates.")
 
     msg = anthropic.Anthropic(api_key=anthropic_key).messages.create(
         model="claude-3-haiku-20240307", max_tokens=250, messages=[{"role": "user", "content": prompt}]
@@ -258,10 +236,8 @@ def run_single_game(bsky, api_key, anthropic_key, theme_desc, slot_tag, force_on
     if gtag: tags.append(gtag)
     unique_tags = list(dict.fromkeys(tags))
 
-    # Safe Truncation Logic
     final_body = f"{header}{text}"
-    if len(final_body) > 250:
-        final_body = final_body[:245].rsplit('.', 1)[0] + "." # Cut at last sentence
+    if len(final_body) > 250: final_body = final_body[:245].rsplit('.', 1)[0] + "."
 
     tb = client_utils.TextBuilder()
     tb.text(f"{final_body}\n\n")
@@ -279,39 +255,39 @@ def run_single_game(bsky, api_key, anthropic_key, theme_desc, slot_tag, force_on
 
 def main():
     logger.info("--- 🚀 START ---")
-    raw_key, anth_key = os.environ.get("RAWG_API_KEY"), os.environ.get("ANTHROPIC_API_KEY")
-    handle, pwd = os.environ.get("BLUESKY_HANDLE"), os.environ.get("BLUESKY_PASSWORD")
-    if not handle or not pwd: return
+    rk, ak = os.environ.get("RAWG_API_KEY"), os.environ.get("ANTHROPIC_API_KEY")
+    h, p = os.environ.get("BLUESKY_HANDLE"), os.environ.get("BLUESKY_PASSWORD")
+    if not h or not p: return
     try:
-        bsky = Client(); bsky.login(handle, pwd)
+        bsky = Client(); bsky.login(h, p)
         logger.info("Login Successful")
     except Exception as e:
         logger.error(f"Login Error: {e}"); return
 
-    f, man, now = os.environ.get("FORCED_SLOT", ""), os.environ.get("IS_MANUAL") == "true", datetime.utcnow()
+    f, m, n = os.environ.get("FORCED_SLOT", ""), os.environ.get("IS_MANUAL") == "true", datetime.utcnow()
     slot_id = None
-    if man and "Slot" in f:
+    if m and "Slot" in f:
         match = re.search(r'Slot\s*(\d+)', f)
         if match: slot_id = int(match.group(1))
-    if slot_id is None: slot_id = SCHEDULE.get(now.weekday(), {}).get(now.hour)
+    if slot_id is None: slot_id = SCHEDULE.get(n.weekday(), {}).get(n.hour)
     if not slot_id: return
 
     handlers = {
-        1: lambda b: run_single_game(b, raw_key, anth_key, "nostalgic and cozy memory", "#Nostalgia"),
-        9: lambda b: run_single_game(b, raw_key, anth_key, "surprising historical fact", "#RetroGaming"),
-        4: lambda b: run_single_game(b, raw_key, anth_key, "spicy unpopular opinion", "#UnpopularOpinion"),
-        6: lambda b: run_single_game(b, raw_key, anth_key, "mysterious hidden gem", "#HiddenGem"),
-        11: lambda b: run_single_game(b, raw_key, anth_key, "relaxing weekend morning", "#RetroGaming"),
-        2: lambda b: run_single_game(b, raw_key, anth_key, "fast quick spotlight", "#ClassicGaming"),
-        3: lambda b: run_rivalry(b, raw_key, anth_key),
-        18: lambda b: run_rivalry(b, raw_key, anth_key),
-        17: lambda b: run_single_game(b, raw_key, anth_key, "nerdy gameplay mechanics dive", "#RetroGaming"),
-        8: lambda b: run_single_game(b, raw_key, anth_key, "tribute to the developers", "#RetroDev"),
-        10: lambda b: run_single_game(b, raw_key, anth_key, "visual art direction focus", "#BoxArt"),
-        12: lambda b: run_single_game(b, raw_key, anth_key, "Sunday playthrough", "#RetroGaming"),
-        13: lambda b: run_single_game(b, raw_key, anth_key, "historical anniversary", "#OnThisDay", True),
-        14: lambda b: run_single_game(b, raw_key, anth_key, "deep legacy impact", "#OnThisDay", True),
-        15: lambda b: run_single_game(b, raw_key, anth_key, "historical release context", "#OnThisDay", True)
+        1: lambda b: run_single_game(b, rk, ak, "nostalgic and cozy memory", "#Nostalgia"),
+        9: lambda b: run_single_game(b, rk, ak, "surprising historical fact", "#RetroGaming"),
+        4: lambda b: run_single_game(b, rk, ak, "spicy unpopular opinion", "#UnpopularOpinion"),
+        6: lambda b: run_single_game(b, rk, ak, "mysterious hidden gem", "#HiddenGem"),
+        11: lambda b: run_single_game(b, rk, ak, "relaxing weekend morning", "#RetroGaming"),
+        2: lambda b: run_single_game(b, rk, ak, "fast quick spotlight", "#ClassicGaming"),
+        3: lambda b: run_rivalry(b, rk, ak),
+        18: lambda b: run_rivalry(b, rk, ak),
+        17: lambda b: run_single_game(b, rk, ak, "nerdy gameplay mechanics dive", "#RetroGaming"),
+        8: lambda b: run_single_game(b, rk, ak, "tribute to the developers", "#RetroDev"),
+        10: lambda b: run_single_game(b, rk, ak, "visual art direction focus", "#BoxArt"),
+        12: lambda b: run_single_game(b, rk, ak, "Sunday playthrough", "#RetroGaming"),
+        13: lambda b: run_single_game(b, rk, ak, "anniversary", "#OnThisDay", True),
+        14: lambda b: run_single_game(b, rk, ak, "legacy impact", "#OnThisDay", True),
+        15: lambda b: run_single_game(b, rk, ak, "historical release context", "#OnThisDay", True)
     }
     if slot_id in handlers: handlers[slot_id](bsky)
     logger.info("--- 🏁 END ---")
