@@ -156,7 +156,7 @@ def run_rivalry(bsky, api_key, anthropic_key):
     
     prompt = (f"Compare '{g1['name']}' and '{g2['name']}'. Be punchy. Must end with a 'Pick one' question. 200 chars max.")
     msg = anthropic.Anthropic(api_key=anthropic_key).messages.create(
-        model="claude-3-haiku-20240307", max_tokens=250, messages=[{"role": "user", "content": prompt}]
+        model="claude-haiku-4-5-20251001", max_tokens=250, messages=[{"role": "user", "content": prompt}]
     )
     text = msg.content[0].text.strip().replace('"', '')
 
